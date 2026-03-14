@@ -267,6 +267,20 @@ func createNotesInteractive(ctx context.Context) error {
 				fmt.Printf("Failed to open editor: %v\n", err)
 			}
 
+			// Check if file is empty after editing
+			info, err := os.Stat(filePath)
+			if err != nil {
+				fmt.Printf("Failed to stat file: %v\n", err)
+				continue
+			}
+
+			if info.Size() == 0 {
+				os.Remove(filePath)
+				fmt.Println("Note is empty, deleted.")
+				fmt.Println()
+				continue
+			}
+
 			tags, err := promptForTags(reader)
 			if err != nil {
 				fmt.Printf("Failed to read tags: %v\n", err)
