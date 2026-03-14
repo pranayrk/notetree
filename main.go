@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 
+	"github.com/pranay/notetree/config"
 	"github.com/urfave/cli/v3"
 )
 
@@ -19,26 +19,23 @@ func crash(err error, text string) {
 	}
 }
 
-func ensureConfigFile() error {
-	homeDir, err := os.UserHomeDir()
-	crash(err, "failed to get home directory")
+type contextKey string
 
-	configDir := filepath.Join(homeDir, ".config", "notetree")
-	configFile := filepath.Join(configDir, "notetree.conf")
+const notesPathKey contextKey = "notes_path"
 
-	if _, err := os.Stat(configFile); !os.IsNotExist(err) {
-		return
+func setupConfig(ctx context.Context) (context.Context, error) {
+	notesPath, err := config.GetNotesPath()
+	if err != nil {
+		return ctx, err
 	}
-	err := os.MkdirAll(configDir, 0755);
-	crash(err, "failed to create config directory")
+	return context.WithValue(ctx, notesPathKey, notesPath), nil
+}
 
-	f, err := os.Create(configFile)
-	crash(err, "failed to create config file")
-	defer f.Close()
-
-	fmt.Printf("Created config file at %s\n", configFile)
-
-	return nil
+func GetNotesPath(ctx context.Context) string {
+	if v := ctx.Value(notesPathKey); v != nil {
+		return v.(string)
+	}
+	return ""
 }
 
 func main() {
@@ -49,7 +46,8 @@ func main() {
 		Version: "0.1.0",
 		Usage:   "A simple CLI app for managing notes",
 		Before: func(ctx context.Context, c *cli.Command) (context.Context, error) {
-			return ctx, ensureConfigFile()
+			newCtx, err := setupConfig(ctx)
+			return newCtx, err
 		},
 		Commands: []*cli.Command{
 			{
