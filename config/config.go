@@ -9,13 +9,15 @@ import (
 )
 
 const (
-	configFileName = "notetree.conf"
-	notesPathKey   = "notes_path"
+	configFileName   = "notetree.conf"
+	notesPathKey     = "notes_path"
+	markdownReaderKey = "markdown_reader"
 )
 
 // Config holds the application configuration
 type Config struct {
-	NotesPath string
+	NotesPath      string
+	MarkdownReader string
 }
 
 // getConfigPath returns the path to the config file
@@ -74,6 +76,8 @@ func Load() (*Config, error) {
 
 		if key == notesPathKey {
 			config.NotesPath = value
+		} else if key == markdownReaderKey {
+			config.MarkdownReader = value
 		}
 	}
 
@@ -99,6 +103,13 @@ func (c *Config) Save() error {
 
 	if c.NotesPath != "" {
 		_, err = fmt.Fprintf(file, "%s=%s\n", notesPathKey, c.NotesPath)
+		if err != nil {
+			return fmt.Errorf("failed to write config: %w", err)
+		}
+	}
+
+	if c.MarkdownReader != "" {
+		_, err = fmt.Fprintf(file, "%s=%s\n", markdownReaderKey, c.MarkdownReader)
 		if err != nil {
 			return fmt.Errorf("failed to write config: %w", err)
 		}
@@ -171,4 +182,41 @@ func GetNotesPath() (string, error) {
 	fmt.Printf("Notes path configured: %s\n", notesPath)
 
 	return notesPath, nil
+}
+
+// GetMarkdownReader returns the markdown reader command, prompting the user if not configured
+func GetMarkdownReader() (string, error) {
+	config, err := Load()
+	if err != nil {
+		return "", err
+	}
+
+	if config.MarkdownReader != "" {
+		return config.MarkdownReader, nil
+	}
+
+	// Markdown reader not configured, prompt user
+	fmt.Println("Markdown reader not configured.")
+	fmt.Print("Enter the CLI command to open markdown files (e.g., 'glow', 'mdv', 'cat'): ")
+
+	reader := bufio.NewReader(os.Stdin)
+	markdownReader, err := reader.ReadString('\n')
+	if err != nil {
+		return "", fmt.Errorf("failed to read input: %w", err)
+	}
+
+	markdownReader = strings.TrimSpace(markdownReader)
+	if markdownReader == "" {
+		return "", fmt.Errorf("markdown reader command cannot be empty")
+	}
+
+	// Save the markdown reader to config
+	config.MarkdownReader = markdownReader
+	if err := config.Save(); err != nil {
+		return "", fmt.Errorf("failed to save config: %w", err)
+	}
+
+	fmt.Printf("Markdown reader configured: %s\n", markdownReader)
+
+	return markdownReader, nil
 }
