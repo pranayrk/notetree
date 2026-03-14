@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"time"
 
 	"github.com/pranay/notetree/config"
 	"github.com/urfave/cli/v3"
@@ -38,6 +41,53 @@ func GetNotesPath(ctx context.Context) string {
 	return ""
 }
 
+func generateNoteFilename() string {
+	timestamp := time.Now().Format("2006-01-02_15-04-05")
+	return fmt.Sprintf("note_%s.md", timestamp)
+}
+
+func openEditor(filePath string) error {
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vim"
+	}
+
+	cmd := exec.Command(editor, filePath)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func createNote(ctx context.Context) error {
+	notesPath := GetNotesPath(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
+	}
+
+	notesDir := filepath.Join(notesPath, "notes")
+	if err := os.MkdirAll(notesDir, 0755); err != nil {
+		return fmt.Errorf("failed to create notes directory: %w", err)
+	}
+
+	filename := generateNoteFilename()
+	filePath := filepath.Join(notesDir, filename)
+
+	file, err := os.Create(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to create note file: %w", err)
+	}
+	file.Close()
+
+	fmt.Printf("Created note: %s\n", filePath)
+
+	if err := openEditor(filePath); err != nil {
+		return fmt.Errorf("failed to open editor: %w", err)
+	}
+
+	return nil
+}
+
 func main() {
 	log.SetFlags(log.Flags() &^ (log.Ldate | log.Ltime))
 
@@ -49,14 +99,16 @@ func main() {
 			newCtx, err := setupConfig(ctx)
 			return newCtx, err
 		},
+		Action: func(ctx context.Context, c *cli.Command) error {
+			return createNote(ctx)
+		},
 		Commands: []*cli.Command{
 			{
 				Name:    "add",
 				Aliases: []string{"a"},
 				Usage:   "Add a new note",
 				Action: func(ctx context.Context, c *cli.Command) error {
-					fmt.Println("Adding a new note...")
-					return nil
+					return createNote(ctx)
 				},
 			},
 			{
@@ -71,6 +123,6 @@ func main() {
 		},
 	}
 
-	err := app.Run(context.Background(), os.Args); 
+	err := app.Run(context.Background(), os.Args);
 	crash(err, "Error running notetree")
 }
