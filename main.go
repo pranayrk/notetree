@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/pranay/notetree/config"
@@ -112,6 +114,64 @@ func createNote(ctx context.Context) error {
 	return nil
 }
 
+func addImages(ctx context.Context) error {
+	notesPath := GetNotesPath(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
+	}
+
+	imagesDir := filepath.Join(notesPath, "images")
+
+	fmt.Println("Interactive image add mode. Enter image paths one at a time.")
+	fmt.Println("Press 'q' to quit.")
+	fmt.Println()
+
+	reader := bufio.NewReader(os.Stdin)
+
+	for {
+		fmt.Print("Enter image path: ")
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("failed to read input: %w", err)
+		}
+
+		input = strings.TrimSpace(input)
+		if input == "" {
+			continue
+		}
+
+		if strings.ToLower(input) == "q" {
+			fmt.Println("Exiting image add mode.")
+			break
+		}
+
+		if _, err := os.Stat(input); os.IsNotExist(err) {
+			fmt.Printf("Image file does not exist: %s\n", input)
+			continue
+		}
+
+		filename := filepath.Base(input)
+		destPath := filepath.Join(imagesDir, filename)
+
+		if _, err := os.Stat(destPath); err == nil {
+			timestamp := time.Now().Format("2006-01-02_15-04-05")
+			ext := filepath.Ext(filename)
+			name := filename[:len(filename)-len(ext)]
+			filename = fmt.Sprintf("%s_%s%s", name, timestamp, ext)
+			destPath = filepath.Join(imagesDir, filename)
+		}
+
+		if err := os.Rename(input, destPath); err != nil {
+			fmt.Printf("Failed to move image: %v\n", err)
+			continue
+		}
+
+		fmt.Printf("Added image: %s\n", destPath)
+	}
+
+	return nil
+}
+
 func main() {
 	log.SetFlags(log.Flags() &^ (log.Ldate | log.Ltime))
 
@@ -142,6 +202,14 @@ func main() {
 				Action: func(ctx context.Context, c *cli.Command) error {
 					fmt.Println("Listing all notes...")
 					return nil
+				},
+			},
+			{
+				Name:    "image",
+				Aliases: []string{"img"},
+				Usage:   "Add images to the images folder",
+				Action: func(ctx context.Context, c *cli.Command) error {
+					return addImages(ctx)
 				},
 			},
 		},
