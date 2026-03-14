@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -114,22 +115,94 @@ func createNote(ctx context.Context) error {
 	return nil
 }
 
+type noteEntry struct {
+	filename string
+	tags     []string
+	firstTag string
+}
+
+func getFirstTag(tags []string) string {
+	if len(tags) == 0 {
+		return ""
+	}
+	tag := tags[0]
+	if idx := strings.Index(tag, "/"); idx != -1 {
+		return tag[:idx]
+	}
+	return tag
+}
+
+func parseNoteLine(line string) noteEntry {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return noteEntry{}
+	}
+
+	entry := noteEntry{}
+
+	bracketIdx := strings.Index(line, "[")
+	if bracketIdx != -1 && strings.HasSuffix(line, "]") {
+		entry.filename = strings.TrimSpace(line[:bracketIdx])
+		tagsStr := strings.TrimSuffix(line[bracketIdx+1:], "]")
+		entry.tags = strings.Split(tagsStr, ",")
+		entry.firstTag = getFirstTag(entry.tags)
+	} else {
+		entry.filename = line
+		entry.firstTag = ""
+	}
+
+	return entry
+}
+
 func addNoteToMap(notesPath, filename string, tags []string) error {
 	notesMapFile := filepath.Join(notesPath, "notes.map")
 
-	file, err := os.OpenFile(notesMapFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	var entries []noteEntry
+
+	if _, err := os.Stat(notesMapFile); err == nil {
+		data, err := os.ReadFile(notesMapFile)
+		if err != nil {
+			return fmt.Errorf("failed to read notes.map: %w", err)
+		}
+
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			if line = strings.TrimSpace(line); line != "" {
+				entries = append(entries, parseNoteLine(line))
+			}
+		}
+	}
+
+	newEntry := noteEntry{
+		filename: filename,
+		tags:     tags,
+		firstTag: getFirstTag(tags),
+	}
+	entries = append(entries, newEntry)
+
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].firstTag != entries[j].firstTag {
+			return entries[i].firstTag < entries[j].firstTag
+		}
+		return entries[i].filename < entries[j].filename
+	})
+
+	file, err := os.Create(notesMapFile)
 	if err != nil {
 		return fmt.Errorf("failed to open notes.map: %w", err)
 	}
 	defer file.Close()
 
-	if len(tags) > 0 {
-		_, err = fmt.Fprintf(file, "%s [%s]\n", filename, strings.Join(tags, ","))
-	} else {
-		_, err = fmt.Fprintf(file, "%s\n", filename)
-	}
-	if err != nil {
-		return fmt.Errorf("failed to write to notes.map: %w", err)
+	for _, entry := range entries {
+		var line string
+		if len(entry.tags) > 0 {
+			line = fmt.Sprintf("%s [%s]\n", entry.filename, strings.Join(entry.tags, ","))
+		} else {
+			line = fmt.Sprintf("%s\n", entry.filename)
+		}
+		if _, err := file.WriteString(line); err != nil {
+			return fmt.Errorf("failed to write to notes.map: %w", err)
+		}
 	}
 
 	return nil
