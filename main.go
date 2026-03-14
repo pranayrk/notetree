@@ -114,7 +114,7 @@ func createNote(ctx context.Context) error {
 	return nil
 }
 
-func addNoteToMap(notesPath, filename string) error {
+func addNoteToMap(notesPath, filename string, tags []string) error {
 	notesMapFile := filepath.Join(notesPath, "notes.map")
 
 	file, err := os.OpenFile(notesMapFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -123,12 +123,40 @@ func addNoteToMap(notesPath, filename string) error {
 	}
 	defer file.Close()
 
-	_, err = fmt.Fprintf(file, "%s\n", filename)
+	if len(tags) > 0 {
+		_, err = fmt.Fprintf(file, "%s [%s]\n", filename, strings.Join(tags, ","))
+	} else {
+		_, err = fmt.Fprintf(file, "%s\n", filename)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to write to notes.map: %w", err)
 	}
 
 	return nil
+}
+
+func promptForTags(reader *bufio.Reader) ([]string, error) {
+	fmt.Print("Enter tags (comma-separated, or press Enter to skip): ")
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, fmt.Errorf("failed to read input: %w", err)
+	}
+
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return []string{}, nil
+	}
+
+	parts := strings.Split(input, ",")
+	var tags []string
+	for _, tag := range parts {
+		tag = strings.TrimSpace(tag)
+		if tag != "" {
+			tags = append(tags, tag)
+		}
+	}
+
+	return tags, nil
 }
 
 func createNotesInteractive(ctx context.Context) error {
@@ -160,15 +188,22 @@ func createNotesInteractive(ctx context.Context) error {
 			}
 			file.Close()
 
-			if err := addNoteToMap(notesPath, filename); err != nil {
-				fmt.Printf("Failed to add note to map: %v\n", err)
-			}
-
 			fmt.Printf("Created note: %s\n\n\n", filepath.Base(filePath))
 
 			if err := openEditor(filePath); err != nil {
 				fmt.Printf("Failed to open editor: %v\n", err)
 			}
+
+			tags, err := promptForTags(reader)
+			if err != nil {
+				fmt.Printf("Failed to read tags: %v\n", err)
+			}
+
+			if err := addNoteToMap(notesPath, filename, tags); err != nil {
+				fmt.Printf("Failed to add note to map: %v\n", err)
+			}
+
+			fmt.Println()
 			continue
 		}
 
