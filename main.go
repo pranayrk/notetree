@@ -347,6 +347,88 @@ func addImages(ctx context.Context) error {
 	return nil
 }
 
+func hasTag(entryTags []string, targetTag string) bool {
+	for _, tag := range entryTags {
+		if tag == targetTag {
+			return true
+		}
+	}
+	return false
+}
+
+func readNotes(ctx context.Context, filterTag string) error {
+	notesPath := GetNotesPath(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
+	}
+
+	notesDir := filepath.Join(notesPath, "notes")
+	notesMapFile := filepath.Join(notesPath, "notes.map")
+
+	data, err := os.ReadFile(notesMapFile)
+	if err != nil {
+		return fmt.Errorf("failed to read notes.map: %w", err)
+	}
+
+	var entries []noteEntry
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if line = strings.TrimSpace(line); line != "" {
+			entry := parseNoteLine(line)
+			if entry.filename != "" {
+				if filterTag == "" || hasTag(entry.tags, filterTag) {
+					entries = append(entries, entry)
+				}
+			}
+		}
+	}
+
+	if len(entries) == 0 {
+		if filterTag != "" {
+			fmt.Printf("No notes found with tag: %s\n", filterTag)
+		} else {
+			fmt.Println("No notes found.")
+		}
+		return nil
+	}
+
+	tmpFile, err := os.CreateTemp(notesDir, "combined_*.md")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	for _, entry := range entries {
+		notePath := filepath.Join(notesDir, entry.filename)
+		content, err := os.ReadFile(notePath)
+		if err != nil {
+			fmt.Printf("Warning: could not read %s: %v\n", entry.filename, err)
+			continue
+		}
+
+		separator := fmt.Sprintf("\n\n--- %s ---\n\n", entry.filename)
+		if _, err := tmpFile.WriteString(separator); err != nil {
+			tmpFile.Close()
+			return fmt.Errorf("failed to write to temporary file: %w", err)
+		}
+		if _, err := tmpFile.Write(content); err != nil {
+			tmpFile.Close()
+			return fmt.Errorf("failed to write to temporary file: %w", err)
+		}
+	}
+	tmpFile.Close()
+
+	content, err := os.ReadFile(tmpPath)
+	if err != nil {
+		return fmt.Errorf("failed to read temporary file: %w", err)
+	}
+
+	fmt.Println(string(content))
+
+	return nil
+}
+
 func main() {
 	log.SetFlags(log.Flags() &^ (log.Ldate | log.Ltime))
 
@@ -371,20 +453,21 @@ func main() {
 				},
 			},
 			{
-				Name:    "list",
-				Aliases: []string{"ls"},
-				Usage:   "List all notes",
-				Action: func(ctx context.Context, c *cli.Command) error {
-					fmt.Println("Listing all notes...")
-					return nil
-				},
-			},
-			{
 				Name:    "image",
 				Aliases: []string{"img"},
 				Usage:   "Add images to the images folder",
 				Action: func(ctx context.Context, c *cli.Command) error {
 					return addImages(ctx)
+				},
+			},
+			{
+				Name:    "read",
+				Usage:   "Read and concatenate notes",
+				ArgsUsage: "[tag]",
+				Description: "Concatenates all notes into a temporary file and displays them.\nIf a tag is provided, only notes with that tag are included.",
+				Action: func(ctx context.Context, c *cli.Command) error {
+					filterTag := c.Args().First()
+					return readNotes(ctx, filterTag)
 				},
 			},
 		},
