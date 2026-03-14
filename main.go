@@ -154,6 +154,18 @@ func parseNoteLine(line string) noteEntry {
 	return entry
 }
 
+func expandNestedTags(tag string) []string {
+	var tags []string
+	parts := strings.Split(tag, "/")
+	
+	for i := range parts {
+		nestedTag := strings.Join(parts[:i+1], "/")
+		tags = append(tags, nestedTag)
+	}
+	
+	return tags
+}
+
 func addNoteToMap(notesPath, filename string, tags []string) error {
 	notesMapFile := filepath.Join(notesPath, "notes.map")
 
@@ -298,6 +310,243 @@ func createNotesInteractive(ctx context.Context) error {
 			fmt.Println("Exiting note add mode.")
 			break
 		}
+	}
+
+	return nil
+}
+
+func listNotes(notesPath string) ([]noteEntry, error) {
+	notesMapFile := filepath.Join(notesPath, "notes.map")
+
+	data, err := os.ReadFile(notesMapFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []noteEntry{}, nil
+		}
+		return nil, fmt.Errorf("failed to read notes.map: %w", err)
+	}
+
+	var entries []noteEntry
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if line = strings.TrimSpace(line); line != "" {
+			entry := parseNoteLine(line)
+			if entry.filename != "" {
+				entries = append(entries, entry)
+			}
+		}
+	}
+
+	return entries, nil
+}
+
+func updateNoteTags(notesPath, filename string, tags []string) error {
+	notesMapFile := filepath.Join(notesPath, "notes.map")
+
+	data, err := os.ReadFile(notesMapFile)
+	if err != nil {
+		return fmt.Errorf("failed to read notes.map: %w", err)
+	}
+
+	var entries []noteEntry
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if line = strings.TrimSpace(line); line != "" {
+			entry := parseNoteLine(line)
+			if entry.filename != "" {
+				if entry.filename == filename {
+					entry.tags = tags
+					entry.firstTag = getFirstTag(tags)
+				}
+				entries = append(entries, entry)
+			}
+		}
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].firstTag != entries[j].firstTag {
+			return entries[i].firstTag < entries[j].firstTag
+		}
+		return entries[i].filename < entries[j].filename
+	})
+
+	file, err := os.Create(notesMapFile)
+	if err != nil {
+		return fmt.Errorf("failed to open notes.map: %w", err)
+	}
+	defer file.Close()
+
+	for _, entry := range entries {
+		var line string
+		if len(entry.tags) > 0 {
+			line = fmt.Sprintf("%s [%s]\n", entry.filename, strings.Join(entry.tags, ","))
+		} else {
+			line = fmt.Sprintf("%s\n", entry.filename)
+		}
+		if _, err := file.WriteString(line); err != nil {
+			return fmt.Errorf("failed to write to notes.map: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func editNotesInteractive(ctx context.Context) error {
+	notesPath := GetNotesPath(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
+	}
+
+	notesDir := filepath.Join(notesPath, "notes")
+
+	entries, err := listNotes(notesPath)
+	if err != nil {
+		return err
+	}
+
+	if len(entries) == 0 {
+		fmt.Println("No notes found.")
+		return nil
+	}
+
+	reader := bufio.NewReader(os.Stdin)
+
+	fmt.Println("Interactive note edit mode. Enter note filename to edit.")
+	fmt.Println("Press 'q' to quit.")
+	fmt.Println()
+
+	for {
+		fmt.Printf("Notes available (%d):\n", len(entries))
+		for i, entry := range entries {
+			tagsStr := ""
+			if len(entry.tags) > 0 {
+				tagsStr = fmt.Sprintf(" [%s]", strings.Join(entry.tags, ","))
+			}
+			fmt.Printf("  %d. %s%s\n", i+1, entry.filename, tagsStr)
+		}
+		fmt.Println()
+
+		fmt.Print("Enter note filename to edit (or 'q' to quit): ")
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("failed to read input: %w", err)
+		}
+
+		input = strings.TrimSpace(input)
+		if input == "" {
+			continue
+		}
+
+		if strings.ToLower(input) == "q" {
+			fmt.Println("Exiting note edit mode.")
+			break
+		}
+
+		// Find the note
+		var foundEntry *noteEntry
+		for i := range entries {
+			if entries[i].filename == input {
+				foundEntry = &entries[i]
+				break
+			}
+		}
+
+		if foundEntry == nil {
+			fmt.Printf("Note not found: %s\n", input)
+			fmt.Println()
+			continue
+		}
+
+		filePath := filepath.Join(notesDir, foundEntry.filename)
+
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			fmt.Printf("Note file does not exist: %s\n", foundEntry.filename)
+			fmt.Println()
+			continue
+		}
+
+		if err := openEditor(filePath); err != nil {
+			fmt.Printf("Failed to open editor: %v\n", err)
+		}
+
+		// Check if file is empty after editing
+		info, err := os.Stat(filePath)
+		if err != nil {
+			fmt.Printf("Failed to stat file: %v\n", err)
+			continue
+		}
+
+		if info.Size() == 0 {
+			os.Remove(filePath)
+			// Remove from map
+			notesMapFile := filepath.Join(notesPath, "notes.map")
+			data, err := os.ReadFile(notesMapFile)
+			if err == nil {
+				var newEntries []noteEntry
+				lines := strings.Split(string(data), "\n")
+				for _, line := range lines {
+					if line = strings.TrimSpace(line); line != "" {
+						entry := parseNoteLine(line)
+						if entry.filename != foundEntry.filename {
+							newEntries = append(newEntries, entry)
+						}
+					}
+				}
+				file, err := os.Create(notesMapFile)
+				if err == nil {
+					defer file.Close()
+					for _, entry := range newEntries {
+						var line string
+						if len(entry.tags) > 0 {
+							line = fmt.Sprintf("%s [%s]\n", entry.filename, strings.Join(entry.tags, ","))
+						} else {
+							line = fmt.Sprintf("%s\n", entry.filename)
+						}
+						file.WriteString(line)
+					}
+				}
+			}
+			fmt.Println("Note is empty, deleted and removed from map.")
+			// Refresh entries
+			entries, _ = listNotes(notesPath)
+			fmt.Println()
+			continue
+		}
+
+		// Prompt to edit tags
+		currentTags := strings.Join(foundEntry.tags, ",")
+		fmt.Printf("Current tags: %s\n", currentTags)
+		fmt.Print("Enter new tags (comma-separated, or press Enter to keep current): ")
+		tagsInput, err := reader.ReadString('\n')
+		if err != nil {
+			fmt.Printf("Failed to read tags: %v\n", err)
+			continue
+		}
+
+		tagsInput = strings.TrimSpace(tagsInput)
+		var newTags []string
+		if tagsInput == "" {
+			newTags = foundEntry.tags
+		} else {
+			parts := strings.Split(tagsInput, ",")
+			for _, tag := range parts {
+				tag = strings.TrimSpace(tag)
+				if tag != "" {
+					expandedTags := expandNestedTags(tag)
+					newTags = append(newTags, expandedTags...)
+				}
+			}
+		}
+
+		if err := updateNoteTags(notesPath, foundEntry.filename, newTags); err != nil {
+			fmt.Printf("Failed to update tags: %v\n", err)
+		} else {
+			fmt.Println("Tags updated.")
+			// Refresh entries
+			entries, _ = listNotes(notesPath)
+		}
+
+		fmt.Println()
 	}
 
 	return nil
@@ -470,6 +719,13 @@ func main() {
 				Usage:   "Add a new note",
 				Action: func(ctx context.Context, c *cli.Command) error {
 					return createNotesInteractive(ctx)
+				},
+			},
+			{
+				Name:    "edit",
+				Usage:   "Edit an existing note",
+				Action: func(ctx context.Context, c *cli.Command) error {
+					return editNotesInteractive(ctx)
 				},
 			},
 			{
