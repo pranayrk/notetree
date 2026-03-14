@@ -31,7 +31,34 @@ func setupConfig(ctx context.Context) (context.Context, error) {
 	if err != nil {
 		return ctx, err
 	}
+
+	if err := ensureNotesStructure(notesPath); err != nil {
+		return ctx, err
+	}
+
 	return context.WithValue(ctx, notesPathKey, notesPath), nil
+}
+
+func ensureNotesStructure(notesPath string) error {
+	notesDir := filepath.Join(notesPath, "notes")
+	imagesDir := filepath.Join(notesPath, "images")
+	notesMapFile := filepath.Join(notesPath, "notes.map")
+
+	if err := os.MkdirAll(notesDir, 0755); err != nil {
+		return fmt.Errorf("failed to create notes directory: %w", err)
+	}
+
+	if err := os.MkdirAll(imagesDir, 0755); err != nil {
+		return fmt.Errorf("failed to create images directory: %w", err)
+	}
+
+	if _, err := os.Stat(notesMapFile); os.IsNotExist(err) {
+		if err := os.WriteFile(notesMapFile, []byte{}, 0644); err != nil {
+			return fmt.Errorf("failed to create notes.map file: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func GetNotesPath(ctx context.Context) string {
@@ -66,9 +93,6 @@ func createNote(ctx context.Context) error {
 	}
 
 	notesDir := filepath.Join(notesPath, "notes")
-	if err := os.MkdirAll(notesDir, 0755); err != nil {
-		return fmt.Errorf("failed to create notes directory: %w", err)
-	}
 
 	filename := generateNoteFilename()
 	filePath := filepath.Join(notesDir, filename)
