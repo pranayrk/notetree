@@ -702,6 +702,11 @@ func readNotes(ctx context.Context, filterTag string, includeFilenames bool) err
 				tmpFile.Close()
 				return fmt.Errorf("failed to write to temporary file: %w", err)
 			}
+			// Add extra newline between files
+			if _, err := tmpFile.WriteString("\n\n"); err != nil {
+				tmpFile.Close()
+				return fmt.Errorf("failed to write to temporary file: %w", err)
+			}
 		}
 	}
 	tmpFile.Close()
@@ -726,7 +731,9 @@ func mainMenu(ctx context.Context) error {
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
+		currentMapFile := GetMapFile(ctx)
 		fmt.Println("Notetree Main Menu:")
+		fmt.Printf("Current map file: \033[1m%s\033[0m\n", currentMapFile)
 		fmt.Println("  (A)dd notes")
 		fmt.Println("  (E)dit notes")
 		fmt.Println("  (R)ead notes")
@@ -768,8 +775,12 @@ func mainMenu(ctx context.Context) error {
 				fmt.Printf("Error adding images: %v\n", err)
 			}
 		case "m":
-			if err := manageMapFiles(ctx, reader); err != nil {
+			newMapFile, err := manageMapFiles(ctx, reader)
+			if err != nil {
 				fmt.Printf("Error managing map files: %v\n", err)
+			} else {
+				// Update context with new map file
+				ctx = context.WithValue(ctx, mapFileKey, newMapFile)
 			}
 		case "q":
 			fmt.Println("Goodbye!")
@@ -782,21 +793,22 @@ func mainMenu(ctx context.Context) error {
 	}
 }
 
-func manageMapFiles(ctx context.Context, reader *bufio.Reader) error {
+func manageMapFiles(ctx context.Context, reader *bufio.Reader) (string, error) {
 	notesPath := GetNotesPath(ctx)
 	if notesPath == "" {
-		return fmt.Errorf("notes path not configured")
+		return "", fmt.Errorf("notes path not configured")
 	}
 
 	for {
 		mapFiles, err := config.ListMapFiles(notesPath)
 		if err != nil {
-			return err
+			return "", err
 		}
 
 		currentMapFile := GetMapFile(ctx)
 
 		fmt.Println("\nMap Files:")
+		fmt.Printf("Current: \033[1m%s\033[0m\n", currentMapFile)
 		if len(mapFiles) == 0 {
 			fmt.Println("  No map files found.")
 		} else {
@@ -816,20 +828,20 @@ func manageMapFiles(ctx context.Context, reader *bufio.Reader) error {
 		fmt.Print("Select option: ")
 		input, err := reader.ReadString('\n')
 		if err != nil {
-			return fmt.Errorf("failed to read input: %w", err)
+			return "", fmt.Errorf("failed to read input: %w", err)
 		}
 
 		input = strings.TrimSpace(input)
 
 		if strings.ToLower(input) == "q" {
-			return nil
+			return currentMapFile, nil
 		}
 
 		if strings.ToLower(input) == "n" {
 			fmt.Print("Enter new map file name: ")
 			newName, err := reader.ReadString('\n')
 			if err != nil {
-				return fmt.Errorf("failed to read input: %w", err)
+				return "", fmt.Errorf("failed to read input: %w", err)
 			}
 			newName = strings.TrimSpace(newName)
 			if newName == "" {
@@ -855,11 +867,8 @@ func manageMapFiles(ctx context.Context, reader *bufio.Reader) error {
 				continue
 			}
 
-			// Update context with new map file
-			ctx = context.WithValue(ctx, mapFileKey, newName)
-
 			fmt.Printf("Created and switched to map file: %s\n", newName)
-			continue
+			return newName, nil
 		}
 
 		// Try to parse as number
@@ -876,10 +885,8 @@ func manageMapFiles(ctx context.Context, reader *bufio.Reader) error {
 			continue
 		}
 
-		// Update context with new map file
-		ctx = context.WithValue(ctx, mapFileKey, selectedMapFile)
-
 		fmt.Printf("Switched to map file: %s\n", selectedMapFile)
+		return selectedMapFile, nil
 	}
 }
 
