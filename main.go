@@ -653,7 +653,7 @@ func readNotes(ctx context.Context, filterTag string, includeFilenames bool) err
 		return nil
 	}
 
-	tmpFile, err := os.CreateTemp(notesPath, "combined_*.md")
+	tmpFile, err := os.CreateTemp(notesPath, "temp_*.md")
 	if err != nil {
 		return fmt.Errorf("failed to create temporary file: %w", err)
 	}
