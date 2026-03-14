@@ -416,16 +416,6 @@ func editNotesInteractive(ctx context.Context) error {
 	fmt.Println()
 
 	for {
-		fmt.Printf("Notes available (%d):\n", len(entries))
-		for i, entry := range entries {
-			tagsStr := ""
-			if len(entry.tags) > 0 {
-				tagsStr = fmt.Sprintf(" [%s]", strings.Join(entry.tags, ","))
-			}
-			fmt.Printf("  %d. %s%s\n", i+1, entry.filename, tagsStr)
-		}
-		fmt.Println()
-
 		fmt.Print("Enter note filename to edit (or 'q' to quit): ")
 		input, err := reader.ReadString('\n')
 		if err != nil {
@@ -655,7 +645,7 @@ func readNotes(ctx context.Context, filterTag string, includeFilenames bool) err
 		return nil
 	}
 
-	tmpFile, err := os.CreateTemp(notesDir, "combined_*.md")
+	tmpFile, err := os.CreateTemp(notesPath, "temp_*.md")
 	if err != nil {
 		return fmt.Errorf("failed to create temporary file: %w", err)
 	}
@@ -730,8 +720,15 @@ func mainMenu(ctx context.Context) error {
 				fmt.Printf("Error in edit mode: %v\n", err)
 			}
 		case "r":
-			if err := readNotes(ctx, "", false); err != nil {
-				fmt.Printf("Error reading notes: %v\n", err)
+			fmt.Print("Enter tag to filter (or Enter to read all): ")
+			tagInput, err := reader.ReadString('\n')
+			if err != nil {
+				fmt.Printf("Error reading tag: %v\n", err)
+			} else {
+				filterTag := strings.TrimSpace(tagInput)
+				if err := readNotes(ctx, filterTag, false); err != nil {
+					fmt.Printf("Error reading notes: %v\n", err)
+				}
 			}
 		case "i":
 			if err := addImages(ctx); err != nil {
