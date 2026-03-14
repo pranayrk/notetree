@@ -296,7 +296,24 @@ func createNotesInteractive(ctx context.Context) error {
 			break
 		}
 
-		filename := generateNoteFilename()
+		fmt.Print("Enter note filename (or press Enter for auto-generated): ")
+		customFilename, err := reader.ReadString('\n')
+		if err != nil {
+			fmt.Printf("Failed to read filename: %v\n", err)
+			continue
+		}
+		customFilename = strings.TrimSpace(customFilename)
+
+		var filename string
+		if customFilename == "" {
+			filename = generateNoteFilename()
+		} else {
+			if !strings.HasSuffix(customFilename, ".md") {
+				filename = customFilename + ".md"
+			} else {
+				filename = customFilename
+			}
+		}
 		filePath := filepath.Join(notesDir, filename)
 
 		if err := os.WriteFile(filePath, []byte{}, 0644); err != nil {
