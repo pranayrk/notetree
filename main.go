@@ -623,20 +623,28 @@ func readNotes(ctx context.Context, filterTag string, includeFilenames bool) err
 		return fmt.Errorf("failed to read notes.map: %w", err)
 	}
 
-	var entries []noteEntry
+	// Use LinkedHashMap to preserve insertion order by first tag
+	taggedNotes := New[string, []noteEntry]()
+
 	lines := strings.Split(string(data), "\n")
 	for _, line := range lines {
 		if line = strings.TrimSpace(line); line != "" {
 			entry := parseNoteLine(line)
 			if entry.filename != "" {
 				if filterTag == "" || hasTag(entry.tags, filterTag) {
-					entries = append(entries, entry)
+					firstTag := entry.firstTag
+					if firstTag == "" {
+						firstTag = "_untagged"
+					}
+					existing, _ := taggedNotes.Get(firstTag)
+					existing = append(existing, entry)
+					taggedNotes.Put(firstTag, existing)
 				}
 			}
 		}
 	}
 
-	if len(entries) == 0 {
+	if taggedNotes.Empty() {
 		if filterTag != "" {
 			fmt.Printf("No notes found with tag: %s\n", filterTag)
 		} else {
@@ -645,31 +653,35 @@ func readNotes(ctx context.Context, filterTag string, includeFilenames bool) err
 		return nil
 	}
 
-	tmpFile, err := os.CreateTemp(notesPath, "temp_*.md")
+	tmpFile, err := os.CreateTemp(notesPath, "combined_*.md")
 	if err != nil {
 		return fmt.Errorf("failed to create temporary file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath)
 
-	for _, entry := range entries {
-		notePath := filepath.Join(notesDir, entry.filename)
-		content, err := os.ReadFile(notePath)
-		if err != nil {
-			fmt.Printf("Warning: could not read %s: %v\n", entry.filename, err)
-			continue
-		}
+	// Iterate through tags in insertion order
+	for _, tag := range taggedNotes.Keys() {
+		entries, _ := taggedNotes.Get(tag)
+		for _, entry := range entries {
+			notePath := filepath.Join(notesDir, entry.filename)
+			content, err := os.ReadFile(notePath)
+			if err != nil {
+				fmt.Printf("Warning: could not read %s: %v\n", entry.filename, err)
+				continue
+			}
 
-		if includeFilenames {
-			separator := fmt.Sprintf("\n\n--- %s ---\n\n", entry.filename)
-			if _, err := tmpFile.WriteString(separator); err != nil {
+			if includeFilenames {
+				separator := fmt.Sprintf("\n\n--- %s ---\n\n", entry.filename)
+				if _, err := tmpFile.WriteString(separator); err != nil {
+					tmpFile.Close()
+					return fmt.Errorf("failed to write to temporary file: %w", err)
+				}
+			}
+			if _, err := tmpFile.Write(content); err != nil {
 				tmpFile.Close()
 				return fmt.Errorf("failed to write to temporary file: %w", err)
 			}
-		}
-		if _, err := tmpFile.Write(content); err != nil {
-			tmpFile.Close()
-			return fmt.Errorf("failed to write to temporary file: %w", err)
 		}
 	}
 	tmpFile.Close()
