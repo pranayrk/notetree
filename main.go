@@ -619,7 +619,7 @@ func hasTag(entryTags []string, targetTag string) bool {
 	return false
 }
 
-func readNotes(ctx context.Context, filterTag string) error {
+func readNotes(ctx context.Context, filterTag string, includeFilenames bool) error {
 	notesPath := GetNotesPath(ctx)
 	if notesPath == "" {
 		return fmt.Errorf("notes path not configured")
@@ -670,10 +670,12 @@ func readNotes(ctx context.Context, filterTag string) error {
 			continue
 		}
 
-		separator := fmt.Sprintf("\n\n--- %s ---\n\n", entry.filename)
-		if _, err := tmpFile.WriteString(separator); err != nil {
-			tmpFile.Close()
-			return fmt.Errorf("failed to write to temporary file: %w", err)
+		if includeFilenames {
+			separator := fmt.Sprintf("\n\n--- %s ---\n\n", entry.filename)
+			if _, err := tmpFile.WriteString(separator); err != nil {
+				tmpFile.Close()
+				return fmt.Errorf("failed to write to temporary file: %w", err)
+			}
 		}
 		if _, err := tmpFile.Write(content); err != nil {
 			tmpFile.Close()
@@ -741,9 +743,17 @@ func main() {
 				Usage:   "Read and concatenate notes",
 				ArgsUsage: "[tag]",
 				Description: "Concatenates all notes into a temporary file and displays them.\nIf a tag is provided, only notes with that tag are included.",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:    "filenames",
+						Aliases: []string{"f"},
+						Usage:   "Include filenames as separators in the output",
+					},
+				},
 				Action: func(ctx context.Context, c *cli.Command) error {
 					filterTag := c.Args().First()
-					return readNotes(ctx, filterTag)
+					includeFilenames := c.Bool("filenames")
+					return readNotes(ctx, filterTag, includeFilenames)
 				},
 			},
 		},
