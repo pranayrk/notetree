@@ -700,6 +700,54 @@ func readNotes(ctx context.Context, filterTag string, includeFilenames bool) err
 	return nil
 }
 
+func mainMenu(ctx context.Context) error {
+	reader := bufio.NewReader(os.Stdin)
+
+	for {
+		fmt.Println("Notetree Main Menu:")
+		fmt.Println("  (A)dd notes")
+		fmt.Println("  (E)dit notes")
+		fmt.Println("  (R)ead notes")
+		fmt.Println("  (I)mage add")
+		fmt.Println("  (Q)uit")
+		fmt.Println()
+
+		fmt.Print("Select option: ")
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("failed to read input: %w", err)
+		}
+
+		input = strings.TrimSpace(input)
+
+		switch strings.ToLower(input) {
+		case "a":
+			if err := createNotesInteractive(ctx); err != nil {
+				fmt.Printf("Error in add mode: %v\n", err)
+			}
+		case "e":
+			if err := editNotesInteractive(ctx); err != nil {
+				fmt.Printf("Error in edit mode: %v\n", err)
+			}
+		case "r":
+			if err := readNotes(ctx, "", false); err != nil {
+				fmt.Printf("Error reading notes: %v\n", err)
+			}
+		case "i":
+			if err := addImages(ctx); err != nil {
+				fmt.Printf("Error adding images: %v\n", err)
+			}
+		case "q":
+			fmt.Println("Goodbye!")
+			return nil
+		default:
+			fmt.Println("Invalid option. Please try again.")
+		}
+
+		fmt.Println()
+	}
+}
+
 func main() {
 	log.SetFlags(log.Flags() &^ (log.Ldate | log.Ltime))
 
@@ -712,7 +760,7 @@ func main() {
 			return newCtx, err
 		},
 		Action: func(ctx context.Context, c *cli.Command) error {
-			return createNotesInteractive(ctx)
+			return mainMenu(ctx)
 		},
 		Commands: []*cli.Command{
 			{
