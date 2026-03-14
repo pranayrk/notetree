@@ -531,10 +531,12 @@ func hasTag(entryTags []string, targetTag string) bool {
 	return false
 }
 
-func readNotes(ctx context.Context, filterTag string, includeFilenames bool) error {
+// buildNotesFile creates a temporary markdown file with concatenated notes
+// Returns the temp file path and a cleanup function
+func buildNotesFile(ctx context.Context, filterTag string, includeFilenames bool) (string, func(), error) {
 	notesPath := GetNotesPath(ctx)
 	if notesPath == "" {
-		return fmt.Errorf("notes path not configured")
+		return "", nil, fmt.Errorf("notes path not configured")
 	}
 
 	notesDir := filepath.Join(notesPath, "notes")
@@ -543,7 +545,7 @@ func readNotes(ctx context.Context, filterTag string, includeFilenames bool) err
 
 	data, err := os.ReadFile(notesMapFile)
 	if err != nil {
-		return fmt.Errorf("failed to read notes.map: %w", err)
+		return "", nil, fmt.Errorf("failed to read notes.map: %w", err)
 	}
 
 	var entries []noteEntry
@@ -559,20 +561,14 @@ func readNotes(ctx context.Context, filterTag string, includeFilenames bool) err
 	}
 
 	if len(entries) == 0 {
-		if filterTag != "" {
-			fmt.Printf("No notes found with tag: %s\n", filterTag)
-		} else {
-			fmt.Println("No notes found.")
-		}
-		return nil
+		return "", nil, nil
 	}
 
 	tmpFile, err := os.CreateTemp(notesPath, "temp_*.md")
 	if err != nil {
-		return fmt.Errorf("failed to create temporary file: %w", err)
+		return "", nil, fmt.Errorf("failed to create temporary file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
 
 	for _, entry := range entries {
 		notePath := filepath.Join(notesDir, entry.filename)
@@ -585,19 +581,45 @@ func readNotes(ctx context.Context, filterTag string, includeFilenames bool) err
 		if includeFilenames {
 			if _, err := tmpFile.WriteString(fmt.Sprintf("\n\n--- %s ---\n\n", entry.filename)); err != nil {
 				tmpFile.Close()
-				return fmt.Errorf("failed to write to temporary file: %w", err)
+				os.Remove(tmpPath)
+				return "", nil, fmt.Errorf("failed to write to temporary file: %w", err)
 			}
 		}
 		if _, err := tmpFile.Write(content); err != nil {
 			tmpFile.Close()
-			return fmt.Errorf("failed to write to temporary file: %w", err)
+			os.Remove(tmpPath)
+			return "", nil, fmt.Errorf("failed to write to temporary file: %w", err)
 		}
 		if _, err := tmpFile.WriteString("\n\n"); err != nil {
 			tmpFile.Close()
-			return fmt.Errorf("failed to write to temporary file: %w", err)
+			os.Remove(tmpPath)
+			return "", nil, fmt.Errorf("failed to write to temporary file: %w", err)
 		}
 	}
 	tmpFile.Close()
+
+	cleanup := func() {
+		os.Remove(tmpPath)
+	}
+
+	return tmpPath, cleanup, nil
+}
+
+func readNotes(ctx context.Context, filterTag string, includeFilenames bool) error {
+	tmpPath, cleanup, err := buildNotesFile(ctx, filterTag, includeFilenames)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	if tmpPath == "" {
+		if filterTag != "" {
+			fmt.Printf("No notes found with tag: %s\n", filterTag)
+		} else {
+			fmt.Println("No notes found.")
+		}
+		return nil
+	}
 
 	markdownReader, err := config.GetMarkdownReader()
 	if err != nil {
@@ -612,33 +634,13 @@ func readNotes(ctx context.Context, filterTag string, includeFilenames bool) err
 }
 
 func exportNotes(ctx context.Context, filterTag string) error {
-	notesPath := GetNotesPath(ctx)
-	if notesPath == "" {
-		return fmt.Errorf("notes path not configured")
-	}
-
-	notesDir := filepath.Join(notesPath, "notes")
-	mapFile := GetMapFile(ctx)
-	notesMapFile := filepath.Join(notesPath, mapFile)
-
-	data, err := os.ReadFile(notesMapFile)
+	tmpPath, cleanup, err := buildNotesFile(ctx, filterTag, false)
 	if err != nil {
-		return fmt.Errorf("failed to read notes.map: %w", err)
+		return err
 	}
+	defer cleanup()
 
-	var entries []noteEntry
-	for _, line := range strings.Split(string(data), "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			entry := parseNoteLine(line)
-			if entry.filename != "" {
-				if filterTag == "" || hasTag(entry.tags, filterTag) {
-					entries = append(entries, entry)
-				}
-			}
-		}
-	}
-
-	if len(entries) == 0 {
+	if tmpPath == "" {
 		if filterTag != "" {
 			fmt.Printf("No notes found with tag: %s\n", filterTag)
 		} else {
@@ -647,31 +649,9 @@ func exportNotes(ctx context.Context, filterTag string) error {
 		return nil
 	}
 
-	tmpFile, err := os.CreateTemp(notesPath, "temp_*.md")
-	if err != nil {
-		return fmt.Errorf("failed to create temporary file: %w", err)
-	}
-	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
-
-	for _, entry := range entries {
-		notePath := filepath.Join(notesDir, entry.filename)
-		content, err := os.ReadFile(notePath)
-		if err != nil {
-			fmt.Printf("Warning: could not read %s: %v\n", entry.filename, err)
-			continue
-		}
-
-		if _, err := tmpFile.Write(content); err != nil {
-			tmpFile.Close()
-			return fmt.Errorf("failed to write to temporary file: %w", err)
-		}
-		if _, err := tmpFile.WriteString("\n\n"); err != nil {
-			tmpFile.Close()
-			return fmt.Errorf("failed to write to temporary file: %w", err)
-		}
-	}
-	tmpFile.Close()
+	notesPath := GetNotesPath(ctx)
+	mapFile := GetMapFile(ctx)
+	notesMapFile := filepath.Join(notesPath, mapFile)
 
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Print("Enter output PDF path: ")
