@@ -546,25 +546,19 @@ func readNotes(ctx context.Context, filterTag string, includeFilenames bool) err
 		return fmt.Errorf("failed to read notes.map: %w", err)
 	}
 
-	taggedNotes := New[string, []noteEntry]()
+	var entries []noteEntry
 	for _, line := range strings.Split(string(data), "\n") {
 		if line = strings.TrimSpace(line); line != "" {
 			entry := parseNoteLine(line)
 			if entry.filename != "" {
 				if filterTag == "" || hasTag(entry.tags, filterTag) {
-					firstTag := entry.firstTag
-					if firstTag == "" {
-						firstTag = "_untagged"
-					}
-					existing, _ := taggedNotes.Get(firstTag)
-					existing = append(existing, entry)
-					taggedNotes.Put(firstTag, existing)
+					entries = append(entries, entry)
 				}
 			}
 		}
 	}
 
-	if taggedNotes.Empty() {
+	if len(entries) == 0 {
 		if filterTag != "" {
 			fmt.Printf("No notes found with tag: %s\n", filterTag)
 		} else {
@@ -580,30 +574,27 @@ func readNotes(ctx context.Context, filterTag string, includeFilenames bool) err
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath)
 
-	for _, tag := range taggedNotes.Keys() {
-		entries, _ := taggedNotes.Get(tag)
-		for _, entry := range entries {
-			notePath := filepath.Join(notesDir, entry.filename)
-			content, err := os.ReadFile(notePath)
-			if err != nil {
-				fmt.Printf("Warning: could not read %s: %v\n", entry.filename, err)
-				continue
-			}
+	for _, entry := range entries {
+		notePath := filepath.Join(notesDir, entry.filename)
+		content, err := os.ReadFile(notePath)
+		if err != nil {
+			fmt.Printf("Warning: could not read %s: %v\n", entry.filename, err)
+			continue
+		}
 
-			if includeFilenames {
-				if _, err := tmpFile.WriteString(fmt.Sprintf("\n\n--- %s ---\n\n", entry.filename)); err != nil {
-					tmpFile.Close()
-					return fmt.Errorf("failed to write to temporary file: %w", err)
-				}
-			}
-			if _, err := tmpFile.Write(content); err != nil {
+		if includeFilenames {
+			if _, err := tmpFile.WriteString(fmt.Sprintf("\n\n--- %s ---\n\n", entry.filename)); err != nil {
 				tmpFile.Close()
 				return fmt.Errorf("failed to write to temporary file: %w", err)
 			}
-			if _, err := tmpFile.WriteString("\n\n"); err != nil {
-				tmpFile.Close()
-				return fmt.Errorf("failed to write to temporary file: %w", err)
-			}
+		}
+		if _, err := tmpFile.Write(content); err != nil {
+			tmpFile.Close()
+			return fmt.Errorf("failed to write to temporary file: %w", err)
+		}
+		if _, err := tmpFile.WriteString("\n\n"); err != nil {
+			tmpFile.Close()
+			return fmt.Errorf("failed to write to temporary file: %w", err)
 		}
 	}
 	tmpFile.Close()
@@ -635,25 +626,19 @@ func exportNotes(ctx context.Context, filterTag string) error {
 		return fmt.Errorf("failed to read notes.map: %w", err)
 	}
 
-	taggedNotes := New[string, []noteEntry]()
+	var entries []noteEntry
 	for _, line := range strings.Split(string(data), "\n") {
 		if line = strings.TrimSpace(line); line != "" {
 			entry := parseNoteLine(line)
 			if entry.filename != "" {
 				if filterTag == "" || hasTag(entry.tags, filterTag) {
-					firstTag := entry.firstTag
-					if firstTag == "" {
-						firstTag = "_untagged"
-					}
-					existing, _ := taggedNotes.Get(firstTag)
-					existing = append(existing, entry)
-					taggedNotes.Put(firstTag, existing)
+					entries = append(entries, entry)
 				}
 			}
 		}
 	}
 
-	if taggedNotes.Empty() {
+	if len(entries) == 0 {
 		if filterTag != "" {
 			fmt.Printf("No notes found with tag: %s\n", filterTag)
 		} else {
@@ -669,24 +654,21 @@ func exportNotes(ctx context.Context, filterTag string) error {
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath)
 
-	for _, tag := range taggedNotes.Keys() {
-		entries, _ := taggedNotes.Get(tag)
-		for _, entry := range entries {
-			notePath := filepath.Join(notesDir, entry.filename)
-			content, err := os.ReadFile(notePath)
-			if err != nil {
-				fmt.Printf("Warning: could not read %s: %v\n", entry.filename, err)
-				continue
-			}
+	for _, entry := range entries {
+		notePath := filepath.Join(notesDir, entry.filename)
+		content, err := os.ReadFile(notePath)
+		if err != nil {
+			fmt.Printf("Warning: could not read %s: %v\n", entry.filename, err)
+			continue
+		}
 
-			if _, err := tmpFile.Write(content); err != nil {
-				tmpFile.Close()
-				return fmt.Errorf("failed to write to temporary file: %w", err)
-			}
-			if _, err := tmpFile.WriteString("\n\n"); err != nil {
-				tmpFile.Close()
-				return fmt.Errorf("failed to write to temporary file: %w", err)
-			}
+		if _, err := tmpFile.Write(content); err != nil {
+			tmpFile.Close()
+			return fmt.Errorf("failed to write to temporary file: %w", err)
+		}
+		if _, err := tmpFile.WriteString("\n\n"); err != nil {
+			tmpFile.Close()
+			return fmt.Errorf("failed to write to temporary file: %w", err)
 		}
 	}
 	tmpFile.Close()
