@@ -73,7 +73,7 @@ func GetNotesPath(ctx context.Context) string {
 
 func generateNoteFilename() string {
 	timestamp := time.Now().Format("2006-01-02_15-04-05")
-	return fmt.Sprintf("note_%s.md", timestamp)
+	return fmt.Sprintf("%s.md", timestamp)
 }
 
 func openEditor(filePath string) error {
