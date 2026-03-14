@@ -27,7 +27,10 @@ func crash(err error, text string) {
 
 type contextKey string
 
-const notesPathKey contextKey = "notes_path"
+const (
+	notesPathKey contextKey = "notes_path"
+	mapFileKey   contextKey = "map_file"
+)
 
 func setupConfig(ctx context.Context) (context.Context, error) {
 	notesPath, err := config.GetNotesPath()
@@ -35,17 +38,24 @@ func setupConfig(ctx context.Context) (context.Context, error) {
 		return ctx, err
 	}
 
-	if err := ensureNotesStructure(notesPath); err != nil {
+	mapFile, err := config.GetMapFile(notesPath)
+	if err != nil {
 		return ctx, err
 	}
 
-	return context.WithValue(ctx, notesPathKey, notesPath), nil
+	if err := ensureNotesStructure(notesPath, mapFile); err != nil {
+		return ctx, err
+	}
+
+	ctx = context.WithValue(ctx, notesPathKey, notesPath)
+	ctx = context.WithValue(ctx, mapFileKey, mapFile)
+	return ctx, nil
 }
 
-func ensureNotesStructure(notesPath string) error {
+func ensureNotesStructure(notesPath string, mapFile string) error {
 	notesDir := filepath.Join(notesPath, "notes")
 	imagesDir := filepath.Join(notesPath, "images")
-	notesMapFile := filepath.Join(notesPath, "notes.map")
+	notesMapFile := filepath.Join(notesPath, mapFile)
 
 	if err := os.MkdirAll(notesDir, 0755); err != nil {
 		return fmt.Errorf("failed to create notes directory: %w", err)
@@ -66,6 +76,13 @@ func ensureNotesStructure(notesPath string) error {
 
 func GetNotesPath(ctx context.Context) string {
 	if v := ctx.Value(notesPathKey); v != nil {
+		return v.(string)
+	}
+	return ""
+}
+
+func GetMapFile(ctx context.Context) string {
+	if v := ctx.Value(mapFileKey); v != nil {
 		return v.(string)
 	}
 	return ""
@@ -166,8 +183,8 @@ func expandNestedTags(tag string) []string {
 	return tags
 }
 
-func addNoteToMap(notesPath, filename string, tags []string) error {
-	notesMapFile := filepath.Join(notesPath, "notes.map")
+func addNoteToMap(notesPath, mapFile, filename string, tags []string) error {
+	notesMapFile := filepath.Join(notesPath, mapFile)
 
 	var entries []noteEntry
 
@@ -255,7 +272,7 @@ func createNotesInteractive(ctx context.Context) error {
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
-		fmt.Print("Create new note? (Enter to create, 'q' to quit): ")
+		fmt.Print("Create new note? (Enter to create, 'Q' to quit): ")
 		input, err := reader.ReadString('\n')
 		if err != nil {
 			return fmt.Errorf("failed to read input: %w", err)
@@ -298,7 +315,8 @@ func createNotesInteractive(ctx context.Context) error {
 				fmt.Printf("Failed to read tags: %v\n", err)
 			}
 
-			if err := addNoteToMap(notesPath, filename, tags); err != nil {
+			mapFile := GetMapFile(ctx)
+			if err := addNoteToMap(notesPath, mapFile, filename, tags); err != nil {
 				fmt.Printf("Failed to add note to map: %v\n", err)
 			}
 
@@ -315,8 +333,8 @@ func createNotesInteractive(ctx context.Context) error {
 	return nil
 }
 
-func listNotes(notesPath string) ([]noteEntry, error) {
-	notesMapFile := filepath.Join(notesPath, "notes.map")
+func listNotes(notesPath, mapFile string) ([]noteEntry, error) {
+	notesMapFile := filepath.Join(notesPath, mapFile)
 
 	data, err := os.ReadFile(notesMapFile)
 	if err != nil {
@@ -340,8 +358,8 @@ func listNotes(notesPath string) ([]noteEntry, error) {
 	return entries, nil
 }
 
-func updateNoteTags(notesPath, filename string, tags []string) error {
-	notesMapFile := filepath.Join(notesPath, "notes.map")
+func updateNoteTags(notesPath, mapFile, filename string, tags []string) error {
+	notesMapFile := filepath.Join(notesPath, mapFile)
 
 	data, err := os.ReadFile(notesMapFile)
 	if err != nil {
@@ -397,9 +415,10 @@ func editNotesInteractive(ctx context.Context) error {
 		return fmt.Errorf("notes path not configured")
 	}
 
+	mapFile := GetMapFile(ctx)
 	notesDir := filepath.Join(notesPath, "notes")
 
-	entries, err := listNotes(notesPath)
+	entries, err := listNotes(notesPath, mapFile)
 	if err != nil {
 		return err
 	}
@@ -412,11 +431,11 @@ func editNotesInteractive(ctx context.Context) error {
 	reader := bufio.NewReader(os.Stdin)
 
 	fmt.Println("Interactive note edit mode. Enter note filename to edit.")
-	fmt.Println("Press 'q' to quit.")
+	fmt.Println("Press 'Q' to quit.")
 	fmt.Println()
 
 	for {
-		fmt.Print("Enter note filename to edit (or 'q' to quit): ")
+		fmt.Print("Enter note filename to edit (or 'Q' to quit): ")
 		input, err := reader.ReadString('\n')
 		if err != nil {
 			return fmt.Errorf("failed to read input: %w", err)
@@ -469,7 +488,7 @@ func editNotesInteractive(ctx context.Context) error {
 		if info.Size() == 0 {
 			os.Remove(filePath)
 			// Remove from map
-			notesMapFile := filepath.Join(notesPath, "notes.map")
+			notesMapFile := filepath.Join(notesPath, mapFile)
 			data, err := os.ReadFile(notesMapFile)
 			if err == nil {
 				var newEntries []noteEntry
@@ -498,7 +517,7 @@ func editNotesInteractive(ctx context.Context) error {
 			}
 			fmt.Println("Note is empty, deleted and removed from map.")
 			// Refresh entries
-			entries, _ = listNotes(notesPath)
+			entries, _ = listNotes(notesPath, mapFile)
 			fmt.Println()
 			continue
 		}
@@ -528,12 +547,12 @@ func editNotesInteractive(ctx context.Context) error {
 			}
 		}
 
-		if err := updateNoteTags(notesPath, foundEntry.filename, newTags); err != nil {
+		if err := updateNoteTags(notesPath, mapFile, foundEntry.filename, newTags); err != nil {
 			fmt.Printf("Failed to update tags: %v\n", err)
 		} else {
 			fmt.Println("Tags updated.")
 			// Refresh entries
-			entries, _ = listNotes(notesPath)
+			entries, _ = listNotes(notesPath, mapFile)
 		}
 
 		fmt.Println()
@@ -551,7 +570,7 @@ func addImages(ctx context.Context) error {
 	imagesDir := filepath.Join(notesPath, "images")
 
 	fmt.Println("Interactive image add mode. Enter image paths one at a time.")
-	fmt.Println("Press 'q' to quit.")
+	fmt.Println("Press 'Q' to quit.")
 	fmt.Println()
 
 	reader := bufio.NewReader(os.Stdin)
@@ -616,7 +635,8 @@ func readNotes(ctx context.Context, filterTag string, includeFilenames bool) err
 	}
 
 	notesDir := filepath.Join(notesPath, "notes")
-	notesMapFile := filepath.Join(notesPath, "notes.map")
+	mapFile := GetMapFile(ctx)
+	notesMapFile := filepath.Join(notesPath, mapFile)
 
 	data, err := os.ReadFile(notesMapFile)
 	if err != nil {
@@ -711,6 +731,7 @@ func mainMenu(ctx context.Context) error {
 		fmt.Println("  (E)dit notes")
 		fmt.Println("  (R)ead notes")
 		fmt.Println("  (I)mage copy")
+		fmt.Println("  (M)ap files")
 		fmt.Println("  (Q)uit")
 		fmt.Println()
 
@@ -746,6 +767,10 @@ func mainMenu(ctx context.Context) error {
 			if err := addImages(ctx); err != nil {
 				fmt.Printf("Error adding images: %v\n", err)
 			}
+		case "m":
+			if err := manageMapFiles(ctx, reader); err != nil {
+				fmt.Printf("Error managing map files: %v\n", err)
+			}
 		case "q":
 			fmt.Println("Goodbye!")
 			return nil
@@ -754,6 +779,107 @@ func mainMenu(ctx context.Context) error {
 		}
 
 		fmt.Println()
+	}
+}
+
+func manageMapFiles(ctx context.Context, reader *bufio.Reader) error {
+	notesPath := GetNotesPath(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
+	}
+
+	for {
+		mapFiles, err := config.ListMapFiles(notesPath)
+		if err != nil {
+			return err
+		}
+
+		currentMapFile := GetMapFile(ctx)
+
+		fmt.Println("\nMap Files:")
+		if len(mapFiles) == 0 {
+			fmt.Println("  No map files found.")
+		} else {
+			for i, mf := range mapFiles {
+				current := ""
+				if mf == currentMapFile {
+					current = " (current)"
+				}
+				fmt.Printf("  %d. %s%s\n", i+1, mf, current)
+			}
+		}
+		fmt.Println()
+		fmt.Println("  (N)ew map file")
+		fmt.Println("  (Q)uit")
+		fmt.Println()
+
+		fmt.Print("Select option: ")
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("failed to read input: %w", err)
+		}
+
+		input = strings.TrimSpace(input)
+
+		if strings.ToLower(input) == "q" {
+			return nil
+		}
+
+		if strings.ToLower(input) == "n" {
+			fmt.Print("Enter new map file name: ")
+			newName, err := reader.ReadString('\n')
+			if err != nil {
+				return fmt.Errorf("failed to read input: %w", err)
+			}
+			newName = strings.TrimSpace(newName)
+			if newName == "" {
+				fmt.Println("Map file name cannot be empty.")
+				continue
+			}
+			if !strings.HasSuffix(newName, ".map") {
+				newName = newName + ".map"
+			}
+
+			// Create the new map file
+			mapFilePath := filepath.Join(notesPath, newName)
+			if _, err := os.Stat(mapFilePath); os.IsNotExist(err) {
+				if err := os.WriteFile(mapFilePath, []byte{}, 0644); err != nil {
+					fmt.Printf("Failed to create map file: %v\n", err)
+					continue
+				}
+			}
+
+			// Set as current
+			if err := config.SetMapFile(newName); err != nil {
+				fmt.Printf("Failed to set map file: %v\n", err)
+				continue
+			}
+
+			// Update context with new map file
+			ctx = context.WithValue(ctx, mapFileKey, newName)
+
+			fmt.Printf("Created and switched to map file: %s\n", newName)
+			continue
+		}
+
+		// Try to parse as number
+		idx := -1
+		fmt.Sscanf(input, "%d", &idx)
+		if idx < 1 || idx > len(mapFiles) {
+			fmt.Println("Invalid option.")
+			continue
+		}
+
+		selectedMapFile := mapFiles[idx-1]
+		if err := config.SetMapFile(selectedMapFile); err != nil {
+			fmt.Printf("Failed to set map file: %v\n", err)
+			continue
+		}
+
+		// Update context with new map file
+		ctx = context.WithValue(ctx, mapFileKey, selectedMapFile)
+
+		fmt.Printf("Switched to map file: %s\n", selectedMapFile)
 	}
 }
 

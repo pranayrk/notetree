@@ -9,15 +9,17 @@ import (
 )
 
 const (
-	configFileName   = "notetree.conf"
-	notesPathKey     = "notes_path"
+	configFileName    = "notetree.conf"
+	notesPathKey      = "notes_path"
 	markdownReaderKey = "markdown_reader"
+	mapFileKey        = "map_file"
 )
 
 // Config holds the application configuration
 type Config struct {
 	NotesPath      string
 	MarkdownReader string
+	MapFile        string
 }
 
 // getConfigPath returns the path to the config file
@@ -78,6 +80,8 @@ func Load() (*Config, error) {
 			config.NotesPath = value
 		} else if key == markdownReaderKey {
 			config.MarkdownReader = value
+		} else if key == mapFileKey {
+			config.MapFile = value
 		}
 	}
 
@@ -110,6 +114,13 @@ func (c *Config) Save() error {
 
 	if c.MarkdownReader != "" {
 		_, err = fmt.Fprintf(file, "%s=%s\n", markdownReaderKey, c.MarkdownReader)
+		if err != nil {
+			return fmt.Errorf("failed to write config: %w", err)
+		}
+	}
+
+	if c.MapFile != "" {
+		_, err = fmt.Fprintf(file, "%s=%s\n", mapFileKey, c.MapFile)
 		if err != nil {
 			return fmt.Errorf("failed to write config: %w", err)
 		}
@@ -219,4 +230,68 @@ func GetMarkdownReader() (string, error) {
 	fmt.Printf("Markdown reader configured: %s\n", markdownReader)
 
 	return markdownReader, nil
+}
+
+// GetMapFile returns the map file name, prompting the user if not configured
+func GetMapFile(notesPath string) (string, error) {
+	config, err := Load()
+	if err != nil {
+		return "", err
+	}
+
+	if config.MapFile != "" {
+		return config.MapFile, nil
+	}
+
+	// Map file not configured, prompt user
+	fmt.Println("Map file not configured.")
+	fmt.Print("Enter the map file name (default: notes.map): ")
+
+	reader := bufio.NewReader(os.Stdin)
+	mapFile, err := reader.ReadString('\n')
+	if err != nil {
+		return "", fmt.Errorf("failed to read input: %w", err)
+	}
+
+	mapFile = strings.TrimSpace(mapFile)
+	if mapFile == "" {
+		mapFile = "notes.map"
+	}
+
+	// Save the map file to config
+	config.MapFile = mapFile
+	if err := config.Save(); err != nil {
+		return "", fmt.Errorf("failed to save config: %w", err)
+	}
+
+	fmt.Printf("Map file configured: %s\n", mapFile)
+
+	return mapFile, nil
+}
+
+// ListMapFiles returns a list of existing map files in the notes directory
+func ListMapFiles(notesPath string) ([]string, error) {
+	pattern := filepath.Join(notesPath, "*.map")
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list map files: %w", err)
+	}
+
+	var mapFiles []string
+	for _, match := range matches {
+		mapFiles = append(mapFiles, filepath.Base(match))
+	}
+
+	return mapFiles, nil
+}
+
+// SetMapFile sets the map file in the config
+func SetMapFile(mapFile string) error {
+	config, err := Load()
+	if err != nil {
+		return err
+	}
+
+	config.MapFile = mapFile
+	return config.Save()
 }
