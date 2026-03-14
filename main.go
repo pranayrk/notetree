@@ -662,10 +662,6 @@ func exportNotes(ctx context.Context, filterTag string) error {
 				continue
 			}
 
-			if _, err := tmpFile.WriteString(fmt.Sprintf("\n\n--- %s ---\n\n", entry.filename)); err != nil {
-				tmpFile.Close()
-				return fmt.Errorf("failed to write to temporary file: %w", err)
-			}
 			if _, err := tmpFile.Write(content); err != nil {
 				tmpFile.Close()
 				return fmt.Errorf("failed to write to temporary file: %w", err)
@@ -689,12 +685,31 @@ func exportNotes(ctx context.Context, filterTag string) error {
 		return fmt.Errorf("output path cannot be empty")
 	}
 
-	cmd := exec.Command("pandoc", tmpPath, "--pdf-engine=typst", "-o", outputPath)
+	// Generate PDF in same folder as map file so relative image paths work
+	tempPDF := filepath.Join(filepath.Dir(notesMapFile), filepath.Base(tmpPath)+".pdf")
+	cmd := exec.Command("pandoc", tmpPath, "--pdf-engine=typst", "-o", tempPDF)
+	cmd.Dir = filepath.Dir(notesMapFile)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
+		os.Remove(tempPDF)
 		return fmt.Errorf("failed to export PDF: %w", err)
+	}
+
+	// Move the PDF to the final output path
+	if err := os.Rename(tempPDF, outputPath); err != nil {
+		// If rename fails (e.g., cross-device), copy and delete
+		srcData, readErr := os.ReadFile(tempPDF)
+		if readErr != nil {
+			os.Remove(tempPDF)
+			return fmt.Errorf("failed to export PDF: %w", err)
+		}
+		if writeErr := os.WriteFile(outputPath, srcData, 0644); writeErr != nil {
+			os.Remove(tempPDF)
+			return fmt.Errorf("failed to export PDF: %w", err)
+		}
+		os.Remove(tempPDF)
 	}
 
 	fmt.Printf("Exported PDF to: %s\n", outputPath)
