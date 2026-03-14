@@ -16,6 +16,17 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+const (
+	appVersion string = "0.1.0"
+)
+
+type contextKey string
+
+const (
+	notesPathKey contextKey = "notes_path"
+	mapFileKey   contextKey = "map_file"
+)
+
 func crash(err error, text string) {
 	if err != nil {
 		if text != "" {
@@ -25,13 +36,167 @@ func crash(err error, text string) {
 	}
 }
 
-type contextKey string
+func GetNotesPath(ctx context.Context) string {
+	if v := ctx.Value(notesPathKey); v != nil {
+		return v.(string)
+	}
+	return ""
+}
 
-const (
-	notesPathKey contextKey = "notes_path"
-	mapFileKey   contextKey = "map_file"
-	appVersion   string     = "0.1.0"
-)
+func GetMapFile(ctx context.Context) string {
+	if v := ctx.Value(mapFileKey); v != nil {
+		return v.(string)
+	}
+	return ""
+}
+
+// noteEntry represents a note with its metadata
+type noteEntry struct {
+	filename string
+	tags     []string
+	firstTag string
+}
+
+func getFirstTag(tags []string) string {
+	if len(tags) == 0 {
+		return ""
+	}
+	tag := tags[0]
+	if idx := strings.Index(tag, "/"); idx != -1 {
+		return tag[:idx]
+	}
+	return tag
+}
+
+func parseNoteLine(line string) noteEntry {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return noteEntry{}
+	}
+
+	entry := noteEntry{}
+	bracketIdx := strings.Index(line, "[")
+	if bracketIdx != -1 && strings.HasSuffix(line, "]") {
+		entry.filename = strings.TrimSpace(line[:bracketIdx])
+		tagsStr := strings.TrimSuffix(line[bracketIdx+1:], "]")
+		entry.tags = strings.Split(tagsStr, ",")
+		entry.firstTag = getFirstTag(entry.tags)
+	} else {
+		entry.filename = line
+		entry.firstTag = ""
+	}
+	return entry
+}
+
+func expandNestedTags(tag string) []string {
+	var tags []string
+	parts := strings.Split(tag, "/")
+	for i := range parts {
+		tags = append(tags, strings.Join(parts[:i+1], "/"))
+	}
+	return tags
+}
+
+// loadNotes reads and parses all entries from the map file
+func loadNotes(notesPath, mapFile string) ([]noteEntry, error) {
+	notesMapFile := filepath.Join(notesPath, mapFile)
+	data, err := os.ReadFile(notesMapFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []noteEntry{}, nil
+		}
+		return nil, fmt.Errorf("failed to read notes.map: %w", err)
+	}
+
+	var entries []noteEntry
+	for _, line := range strings.Split(string(data), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			if entry := parseNoteLine(line); entry.filename != "" {
+				entries = append(entries, entry)
+			}
+		}
+	}
+	return entries, nil
+}
+
+// saveNotes writes entries to the map file, sorted by tag and filename
+func saveNotes(notesPath, mapFile string, entries []noteEntry) error {
+	notesMapFile := filepath.Join(notesPath, mapFile)
+
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].firstTag != entries[j].firstTag {
+			return entries[i].firstTag < entries[j].firstTag
+		}
+		return entries[i].filename < entries[j].filename
+	})
+
+	file, err := os.Create(notesMapFile)
+	if err != nil {
+		return fmt.Errorf("failed to open notes.map: %w", err)
+	}
+	defer file.Close()
+
+	for _, entry := range entries {
+		var line string
+		if len(entry.tags) > 0 {
+			line = fmt.Sprintf("%s [%s]\n", entry.filename, strings.Join(entry.tags, ","))
+		} else {
+			line = fmt.Sprintf("%s\n", entry.filename)
+		}
+		if _, err := file.WriteString(line); err != nil {
+			return fmt.Errorf("failed to write to notes.map: %w", err)
+		}
+	}
+	return nil
+}
+
+// addNoteToMap adds a note entry to the map file
+func addNoteToMap(notesPath, mapFile, filename string, tags []string) error {
+	entries, err := loadNotes(notesPath, mapFile)
+	if err != nil {
+		return err
+	}
+
+	entries = append(entries, noteEntry{
+		filename: filename,
+		tags:     tags,
+		firstTag: getFirstTag(tags),
+	})
+	return saveNotes(notesPath, mapFile, entries)
+}
+
+// updateNoteTags updates tags for a note in the map file
+func updateNoteTags(notesPath, mapFile, filename string, tags []string) error {
+	entries, err := loadNotes(notesPath, mapFile)
+	if err != nil {
+		return err
+	}
+
+	for i := range entries {
+		if entries[i].filename == filename {
+			entries[i].tags = tags
+			entries[i].firstTag = getFirstTag(tags)
+			break
+		}
+	}
+	return saveNotes(notesPath, mapFile, entries)
+}
+
+// removeNoteFromMap removes a note entry from the map file
+func removeNoteFromMap(notesPath, mapFile, filename string) error {
+	entries, err := loadNotes(notesPath, mapFile)
+	if err != nil {
+		return err
+	}
+
+	var newEntries []noteEntry
+	for _, entry := range entries {
+		if entry.filename != filename {
+			newEntries = append(newEntries, entry)
+		}
+	}
+	return saveNotes(notesPath, mapFile, newEntries)
+}
 
 func setupConfig(ctx context.Context) (context.Context, error) {
 	notesPath, err := config.GetNotesPath()
@@ -61,37 +226,19 @@ func ensureNotesStructure(notesPath string, mapFile string) error {
 	if err := os.MkdirAll(notesDir, 0755); err != nil {
 		return fmt.Errorf("failed to create notes directory: %w", err)
 	}
-
 	if err := os.MkdirAll(imagesDir, 0755); err != nil {
 		return fmt.Errorf("failed to create images directory: %w", err)
 	}
-
 	if _, err := os.Stat(notesMapFile); os.IsNotExist(err) {
 		if err := os.WriteFile(notesMapFile, []byte{}, 0644); err != nil {
-			return fmt.Errorf("failed to create notes.map file: %w", err)
+			return fmt.Errorf("failed to create map file: %w", err)
 		}
 	}
-
 	return nil
 }
 
-func GetNotesPath(ctx context.Context) string {
-	if v := ctx.Value(notesPathKey); v != nil {
-		return v.(string)
-	}
-	return ""
-}
-
-func GetMapFile(ctx context.Context) string {
-	if v := ctx.Value(mapFileKey); v != nil {
-		return v.(string)
-	}
-	return ""
-}
-
 func generateNoteFilename() string {
-	timestamp := time.Now().Format("2006-01-02_15-04-05")
-	return fmt.Sprintf("%s.md", timestamp)
+	return fmt.Sprintf("%s.md", time.Now().Format("2006-01-02_15-04-05"))
 }
 
 func openEditor(filePath string) error {
@@ -99,143 +246,11 @@ func openEditor(filePath string) error {
 	if editor == "" {
 		editor = "vim"
 	}
-
 	cmd := exec.Command(editor, filePath)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
-}
-
-func createNote(ctx context.Context) error {
-	notesPath := GetNotesPath(ctx)
-	if notesPath == "" {
-		return fmt.Errorf("notes path not configured")
-	}
-
-	notesDir := filepath.Join(notesPath, "notes")
-
-	filename := generateNoteFilename()
-	filePath := filepath.Join(notesDir, filename)
-
-	file, err := os.Create(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to create note file: %w", err)
-	}
-	file.Close()
-
-	fmt.Printf("Created note: %s\n", filePath)
-
-	if err := openEditor(filePath); err != nil {
-		return fmt.Errorf("failed to open editor: %w", err)
-	}
-
-	return nil
-}
-
-type noteEntry struct {
-	filename string
-	tags     []string
-	firstTag string
-}
-
-func getFirstTag(tags []string) string {
-	if len(tags) == 0 {
-		return ""
-	}
-	tag := tags[0]
-	if idx := strings.Index(tag, "/"); idx != -1 {
-		return tag[:idx]
-	}
-	return tag
-}
-
-func parseNoteLine(line string) noteEntry {
-	line = strings.TrimSpace(line)
-	if line == "" {
-		return noteEntry{}
-	}
-
-	entry := noteEntry{}
-
-	bracketIdx := strings.Index(line, "[")
-	if bracketIdx != -1 && strings.HasSuffix(line, "]") {
-		entry.filename = strings.TrimSpace(line[:bracketIdx])
-		tagsStr := strings.TrimSuffix(line[bracketIdx+1:], "]")
-		entry.tags = strings.Split(tagsStr, ",")
-		entry.firstTag = getFirstTag(entry.tags)
-	} else {
-		entry.filename = line
-		entry.firstTag = ""
-	}
-
-	return entry
-}
-
-func expandNestedTags(tag string) []string {
-	var tags []string
-	parts := strings.Split(tag, "/")
-	
-	for i := range parts {
-		nestedTag := strings.Join(parts[:i+1], "/")
-		tags = append(tags, nestedTag)
-	}
-	
-	return tags
-}
-
-func addNoteToMap(notesPath, mapFile, filename string, tags []string) error {
-	notesMapFile := filepath.Join(notesPath, mapFile)
-
-	var entries []noteEntry
-
-	if _, err := os.Stat(notesMapFile); err == nil {
-		data, err := os.ReadFile(notesMapFile)
-		if err != nil {
-			return fmt.Errorf("failed to read notes.map: %w", err)
-		}
-
-		lines := strings.Split(string(data), "\n")
-		for _, line := range lines {
-			if line = strings.TrimSpace(line); line != "" {
-				entries = append(entries, parseNoteLine(line))
-			}
-		}
-	}
-
-	newEntry := noteEntry{
-		filename: filename,
-		tags:     tags,
-		firstTag: getFirstTag(tags),
-	}
-	entries = append(entries, newEntry)
-
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].firstTag != entries[j].firstTag {
-			return entries[i].firstTag < entries[j].firstTag
-		}
-		return entries[i].filename < entries[j].filename
-	})
-
-	file, err := os.Create(notesMapFile)
-	if err != nil {
-		return fmt.Errorf("failed to open notes.map: %w", err)
-	}
-	defer file.Close()
-
-	for _, entry := range entries {
-		var line string
-		if len(entry.tags) > 0 {
-			line = fmt.Sprintf("%s [%s]\n", entry.filename, strings.Join(entry.tags, ","))
-		} else {
-			line = fmt.Sprintf("%s\n", entry.filename)
-		}
-		if _, err := file.WriteString(line); err != nil {
-			return fmt.Errorf("failed to write to notes.map: %w", err)
-		}
-	}
-
-	return nil
 }
 
 func promptForTags(reader *bufio.Reader) ([]string, error) {
@@ -250,15 +265,12 @@ func promptForTags(reader *bufio.Reader) ([]string, error) {
 		return []string{}, nil
 	}
 
-	parts := strings.Split(input, ",")
 	var tags []string
-	for _, tag := range parts {
-		tag = strings.TrimSpace(tag)
-		if tag != "" {
+	for _, tag := range strings.Split(input, ",") {
+		if tag = strings.TrimSpace(tag); tag != "" {
 			tags = append(tags, tag)
 		}
 	}
-
 	return tags, nil
 }
 
@@ -269,7 +281,7 @@ func createNotesInteractive(ctx context.Context) error {
 	}
 
 	notesDir := filepath.Join(notesPath, "notes")
-
+	mapFile := GetMapFile(ctx)
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
@@ -279,134 +291,48 @@ func createNotesInteractive(ctx context.Context) error {
 			return fmt.Errorf("failed to read input: %w", err)
 		}
 
-		input = strings.TrimSpace(input)
-		if input == "" {
-			filename := generateNoteFilename()
-			filePath := filepath.Join(notesDir, filename)
+		if strings.ToLower(strings.TrimSpace(input)) == "q" {
+			fmt.Println("Exiting note add mode.")
+			break
+		}
 
-			file, err := os.Create(filePath)
-			if err != nil {
-				fmt.Printf("Failed to create note file: %v\n", err)
-				continue
-			}
-			file.Close()
+		filename := generateNoteFilename()
+		filePath := filepath.Join(notesDir, filename)
 
-			fmt.Printf("Created note: %s\n\n\n", filepath.Base(filePath))
+		if err := os.WriteFile(filePath, []byte{}, 0644); err != nil {
+			fmt.Printf("Failed to create note file: %v\n", err)
+			continue
+		}
 
-			if err := openEditor(filePath); err != nil {
-				fmt.Printf("Failed to open editor: %v\n", err)
-			}
+		fmt.Printf("Created note: %s\n\n\n", filepath.Base(filePath))
 
-			// Check if file is empty after editing
-			info, err := os.Stat(filePath)
-			if err != nil {
-				fmt.Printf("Failed to stat file: %v\n", err)
-				continue
-			}
+		if err := openEditor(filePath); err != nil {
+			fmt.Printf("Failed to open editor: %v\n", err)
+		}
 
-			if info.Size() == 0 {
-				os.Remove(filePath)
-				fmt.Println("Note is empty, deleted.")
-				fmt.Println()
-				continue
-			}
+		info, err := os.Stat(filePath)
+		if err != nil {
+			fmt.Printf("Failed to stat file: %v\n", err)
+			continue
+		}
 
-			tags, err := promptForTags(reader)
-			if err != nil {
-				fmt.Printf("Failed to read tags: %v\n", err)
-			}
-
-			mapFile := GetMapFile(ctx)
-			if err := addNoteToMap(notesPath, mapFile, filename, tags); err != nil {
-				fmt.Printf("Failed to add note to map: %v\n", err)
-			}
-
+		if info.Size() == 0 {
+			os.Remove(filePath)
+			fmt.Println("Note is empty, deleted.")
 			fmt.Println()
 			continue
 		}
 
-		if strings.ToLower(input) == "q" {
-			fmt.Println("Exiting note add mode.")
-			break
+		tags, err := promptForTags(reader)
+		if err != nil {
+			fmt.Printf("Failed to read tags: %v\n", err)
 		}
-	}
 
-	return nil
-}
-
-func listNotes(notesPath, mapFile string) ([]noteEntry, error) {
-	notesMapFile := filepath.Join(notesPath, mapFile)
-
-	data, err := os.ReadFile(notesMapFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []noteEntry{}, nil
+		if err := addNoteToMap(notesPath, mapFile, filename, tags); err != nil {
+			fmt.Printf("Failed to add note to map: %v\n", err)
 		}
-		return nil, fmt.Errorf("failed to read notes.map: %w", err)
+		fmt.Println()
 	}
-
-	var entries []noteEntry
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		if line = strings.TrimSpace(line); line != "" {
-			entry := parseNoteLine(line)
-			if entry.filename != "" {
-				entries = append(entries, entry)
-			}
-		}
-	}
-
-	return entries, nil
-}
-
-func updateNoteTags(notesPath, mapFile, filename string, tags []string) error {
-	notesMapFile := filepath.Join(notesPath, mapFile)
-
-	data, err := os.ReadFile(notesMapFile)
-	if err != nil {
-		return fmt.Errorf("failed to read notes.map: %w", err)
-	}
-
-	var entries []noteEntry
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		if line = strings.TrimSpace(line); line != "" {
-			entry := parseNoteLine(line)
-			if entry.filename != "" {
-				if entry.filename == filename {
-					entry.tags = tags
-					entry.firstTag = getFirstTag(tags)
-				}
-				entries = append(entries, entry)
-			}
-		}
-	}
-
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].firstTag != entries[j].firstTag {
-			return entries[i].firstTag < entries[j].firstTag
-		}
-		return entries[i].filename < entries[j].filename
-	})
-
-	file, err := os.Create(notesMapFile)
-	if err != nil {
-		return fmt.Errorf("failed to open notes.map: %w", err)
-	}
-	defer file.Close()
-
-	for _, entry := range entries {
-		var line string
-		if len(entry.tags) > 0 {
-			line = fmt.Sprintf("%s [%s]\n", entry.filename, strings.Join(entry.tags, ","))
-		} else {
-			line = fmt.Sprintf("%s\n", entry.filename)
-		}
-		if _, err := file.WriteString(line); err != nil {
-			return fmt.Errorf("failed to write to notes.map: %w", err)
-		}
-	}
-
 	return nil
 }
 
@@ -418,8 +344,9 @@ func editNotesInteractive(ctx context.Context) error {
 
 	mapFile := GetMapFile(ctx)
 	notesDir := filepath.Join(notesPath, "notes")
+	reader := bufio.NewReader(os.Stdin)
 
-	entries, err := listNotes(notesPath, mapFile)
+	entries, err := loadNotes(notesPath, mapFile)
 	if err != nil {
 		return err
 	}
@@ -428,8 +355,6 @@ func editNotesInteractive(ctx context.Context) error {
 		fmt.Println("No notes found.")
 		return nil
 	}
-
-	reader := bufio.NewReader(os.Stdin)
 
 	fmt.Println("Interactive note edit mode. Enter note filename to edit.")
 	fmt.Println("Press 'Q' to quit.")
@@ -452,7 +377,6 @@ func editNotesInteractive(ctx context.Context) error {
 			break
 		}
 
-		// Find the note
 		var foundEntry *noteEntry
 		for i := range entries {
 			if entries[i].filename == input {
@@ -468,7 +392,6 @@ func editNotesInteractive(ctx context.Context) error {
 		}
 
 		filePath := filepath.Join(notesDir, foundEntry.filename)
-
 		if _, err := os.Stat(filePath); os.IsNotExist(err) {
 			fmt.Printf("Note file does not exist: %s\n", foundEntry.filename)
 			fmt.Println()
@@ -479,7 +402,6 @@ func editNotesInteractive(ctx context.Context) error {
 			fmt.Printf("Failed to open editor: %v\n", err)
 		}
 
-		// Check if file is empty after editing
 		info, err := os.Stat(filePath)
 		if err != nil {
 			fmt.Printf("Failed to stat file: %v\n", err)
@@ -488,42 +410,15 @@ func editNotesInteractive(ctx context.Context) error {
 
 		if info.Size() == 0 {
 			os.Remove(filePath)
-			// Remove from map
-			notesMapFile := filepath.Join(notesPath, mapFile)
-			data, err := os.ReadFile(notesMapFile)
-			if err == nil {
-				var newEntries []noteEntry
-				lines := strings.Split(string(data), "\n")
-				for _, line := range lines {
-					if line = strings.TrimSpace(line); line != "" {
-						entry := parseNoteLine(line)
-						if entry.filename != foundEntry.filename {
-							newEntries = append(newEntries, entry)
-						}
-					}
-				}
-				file, err := os.Create(notesMapFile)
-				if err == nil {
-					defer file.Close()
-					for _, entry := range newEntries {
-						var line string
-						if len(entry.tags) > 0 {
-							line = fmt.Sprintf("%s [%s]\n", entry.filename, strings.Join(entry.tags, ","))
-						} else {
-							line = fmt.Sprintf("%s\n", entry.filename)
-						}
-						file.WriteString(line)
-					}
-				}
+			if err := removeNoteFromMap(notesPath, mapFile, foundEntry.filename); err != nil {
+				fmt.Printf("Failed to remove from map: %v\n", err)
 			}
 			fmt.Println("Note is empty, deleted and removed from map.")
-			// Refresh entries
-			entries, _ = listNotes(notesPath, mapFile)
+			entries, _ = loadNotes(notesPath, mapFile)
 			fmt.Println()
 			continue
 		}
 
-		// Prompt to edit tags
 		currentTags := strings.Join(foundEntry.tags, ",")
 		fmt.Printf("Current tags: %s\n", currentTags)
 		fmt.Print("Enter new tags (comma-separated, or press Enter to keep current): ")
@@ -538,12 +433,9 @@ func editNotesInteractive(ctx context.Context) error {
 		if tagsInput == "" {
 			newTags = foundEntry.tags
 		} else {
-			parts := strings.Split(tagsInput, ",")
-			for _, tag := range parts {
-				tag = strings.TrimSpace(tag)
-				if tag != "" {
-					expandedTags := expandNestedTags(tag)
-					newTags = append(newTags, expandedTags...)
+			for _, tag := range strings.Split(tagsInput, ",") {
+				if tag = strings.TrimSpace(tag); tag != "" {
+					newTags = append(newTags, expandNestedTags(tag)...)
 				}
 			}
 		}
@@ -552,13 +444,10 @@ func editNotesInteractive(ctx context.Context) error {
 			fmt.Printf("Failed to update tags: %v\n", err)
 		} else {
 			fmt.Println("Tags updated.")
-			// Refresh entries
-			entries, _ = listNotes(notesPath, mapFile)
+			entries, _ = loadNotes(notesPath, mapFile)
 		}
-
 		fmt.Println()
 	}
-
 	return nil
 }
 
@@ -569,12 +458,11 @@ func addImages(ctx context.Context) error {
 	}
 
 	imagesDir := filepath.Join(notesPath, "images")
+	reader := bufio.NewReader(os.Stdin)
 
 	fmt.Println("Interactive image add mode. Enter image paths one at a time.")
 	fmt.Println("Press 'Q' to quit.")
 	fmt.Println()
-
-	reader := bufio.NewReader(os.Stdin)
 
 	for {
 		fmt.Print("Enter image path: ")
@@ -602,10 +490,9 @@ func addImages(ctx context.Context) error {
 		destPath := filepath.Join(imagesDir, filename)
 
 		if _, err := os.Stat(destPath); err == nil {
-			timestamp := time.Now().Format("2006-01-02_15-04-05")
 			ext := filepath.Ext(filename)
 			name := filename[:len(filename)-len(ext)]
-			filename = fmt.Sprintf("%s_%s%s", name, timestamp, ext)
+			filename = fmt.Sprintf("%s_%s%s", name, time.Now().Format("2006-01-02_15-04-05"), ext)
 			destPath = filepath.Join(imagesDir, filename)
 		}
 
@@ -613,10 +500,8 @@ func addImages(ctx context.Context) error {
 			fmt.Printf("Failed to move image: %v\n", err)
 			continue
 		}
-
 		fmt.Printf("Added image: %s\n", destPath)
 	}
-
 	return nil
 }
 
@@ -644,11 +529,8 @@ func readNotes(ctx context.Context, filterTag string, includeFilenames bool) err
 		return fmt.Errorf("failed to read notes.map: %w", err)
 	}
 
-	// Use LinkedHashMap to preserve insertion order by first tag
 	taggedNotes := New[string, []noteEntry]()
-
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
+	for _, line := range strings.Split(string(data), "\n") {
 		if line = strings.TrimSpace(line); line != "" {
 			entry := parseNoteLine(line)
 			if entry.filename != "" {
@@ -681,7 +563,6 @@ func readNotes(ctx context.Context, filterTag string, includeFilenames bool) err
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath)
 
-	// Iterate through tags in insertion order
 	for _, tag := range taggedNotes.Keys() {
 		entries, _ := taggedNotes.Get(tag)
 		for _, entry := range entries {
@@ -693,8 +574,7 @@ func readNotes(ctx context.Context, filterTag string, includeFilenames bool) err
 			}
 
 			if includeFilenames {
-				separator := fmt.Sprintf("\n\n--- %s ---\n\n", entry.filename)
-				if _, err := tmpFile.WriteString(separator); err != nil {
+				if _, err := tmpFile.WriteString(fmt.Sprintf("\n\n--- %s ---\n\n", entry.filename)); err != nil {
 					tmpFile.Close()
 					return fmt.Errorf("failed to write to temporary file: %w", err)
 				}
@@ -703,7 +583,6 @@ func readNotes(ctx context.Context, filterTag string, includeFilenames bool) err
 				tmpFile.Close()
 				return fmt.Errorf("failed to write to temporary file: %w", err)
 			}
-			// Add extra newline between files
 			if _, err := tmpFile.WriteString("\n\n"); err != nil {
 				tmpFile.Close()
 				return fmt.Errorf("failed to write to temporary file: %w", err)
@@ -721,10 +600,104 @@ func readNotes(ctx context.Context, filterTag string, includeFilenames bool) err
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to run markdown reader: %w", err)
+	return cmd.Run()
+}
+
+func exportNotes(ctx context.Context, filterTag string) error {
+	notesPath := GetNotesPath(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
 	}
 
+	notesDir := filepath.Join(notesPath, "notes")
+	mapFile := GetMapFile(ctx)
+	notesMapFile := filepath.Join(notesPath, mapFile)
+
+	data, err := os.ReadFile(notesMapFile)
+	if err != nil {
+		return fmt.Errorf("failed to read notes.map: %w", err)
+	}
+
+	taggedNotes := New[string, []noteEntry]()
+	for _, line := range strings.Split(string(data), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			entry := parseNoteLine(line)
+			if entry.filename != "" {
+				if filterTag == "" || hasTag(entry.tags, filterTag) {
+					firstTag := entry.firstTag
+					if firstTag == "" {
+						firstTag = "_untagged"
+					}
+					existing, _ := taggedNotes.Get(firstTag)
+					existing = append(existing, entry)
+					taggedNotes.Put(firstTag, existing)
+				}
+			}
+		}
+	}
+
+	if taggedNotes.Empty() {
+		if filterTag != "" {
+			fmt.Printf("No notes found with tag: %s\n", filterTag)
+		} else {
+			fmt.Println("No notes found.")
+		}
+		return nil
+	}
+
+	tmpFile, err := os.CreateTemp(notesPath, "temp_*.md")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	for _, tag := range taggedNotes.Keys() {
+		entries, _ := taggedNotes.Get(tag)
+		for _, entry := range entries {
+			notePath := filepath.Join(notesDir, entry.filename)
+			content, err := os.ReadFile(notePath)
+			if err != nil {
+				fmt.Printf("Warning: could not read %s: %v\n", entry.filename, err)
+				continue
+			}
+
+			if _, err := tmpFile.WriteString(fmt.Sprintf("\n\n--- %s ---\n\n", entry.filename)); err != nil {
+				tmpFile.Close()
+				return fmt.Errorf("failed to write to temporary file: %w", err)
+			}
+			if _, err := tmpFile.Write(content); err != nil {
+				tmpFile.Close()
+				return fmt.Errorf("failed to write to temporary file: %w", err)
+			}
+			if _, err := tmpFile.WriteString("\n\n"); err != nil {
+				tmpFile.Close()
+				return fmt.Errorf("failed to write to temporary file: %w", err)
+			}
+		}
+	}
+	tmpFile.Close()
+
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print("Enter output PDF path: ")
+	outputPath, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("failed to read output path: %w", err)
+	}
+	outputPath = strings.TrimSpace(outputPath)
+	if outputPath == "" {
+		return fmt.Errorf("output path cannot be empty")
+	}
+
+	cmd := exec.Command("pandoc", tmpPath, "--pdf-engine=typst", "-o", outputPath)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to export PDF: %w", err)
+	}
+
+	fmt.Printf("Exported PDF to: %s\n", outputPath)
 	return nil
 }
 
@@ -732,11 +705,11 @@ func mainMenu(ctx context.Context) error {
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
-		currentMapFile := GetMapFile(ctx)
 		fmt.Printf("notetree version %s\n", appVersion)
-		fmt.Printf("Current map file: \033[1m%s\033[0m\n", currentMapFile)
+		fmt.Printf("Current map file: \033[1m%s\033[0m\n", GetMapFile(ctx))
 		fmt.Println("  (A)dd notes")
 		fmt.Println("  (R)ead notes")
+		fmt.Println("  (X)port note PDF")
 		fmt.Println("  (E)dit notes")
 		fmt.Println("  (D)elete notes")
 		fmt.Println("  (I)mage copy")
@@ -750,38 +723,39 @@ func mainMenu(ctx context.Context) error {
 			return fmt.Errorf("failed to read input: %w", err)
 		}
 
-		input = strings.TrimSpace(input)
-
-		switch strings.ToLower(input) {
+		switch strings.ToLower(strings.TrimSpace(input)) {
 		case "a":
 			if err := createNotesInteractive(ctx); err != nil {
 				fmt.Printf("Error in add mode: %v\n", err)
-			}
-		case "e":
-			if err := editNotesInteractive(ctx); err != nil {
-				fmt.Printf("Error in edit mode: %v\n", err)
 			}
 		case "r":
 			fmt.Print("Enter tag to filter (or Enter to read all): ")
 			tagInput, err := reader.ReadString('\n')
 			if err != nil {
 				fmt.Printf("Error reading tag: %v\n", err)
-			} else {
-				filterTag := strings.TrimSpace(tagInput)
-				if err := readNotes(ctx, filterTag, false); err != nil {
-					fmt.Printf("Error reading notes: %v\n", err)
-				}
+			} else if err := readNotes(ctx, strings.TrimSpace(tagInput), false); err != nil {
+				fmt.Printf("Error reading notes: %v\n", err)
+			}
+		case "x":
+			fmt.Print("Enter tag to filter (or Enter to export all): ")
+			tagInput, err := reader.ReadString('\n')
+			if err != nil {
+				fmt.Printf("Error reading tag: %v\n", err)
+			} else if err := exportNotes(ctx, strings.TrimSpace(tagInput)); err != nil {
+				fmt.Printf("Error exporting notes: %v\n", err)
+			}
+		case "e":
+			if err := editNotesInteractive(ctx); err != nil {
+				fmt.Printf("Error in edit mode: %v\n", err)
 			}
 		case "i":
 			if err := addImages(ctx); err != nil {
 				fmt.Printf("Error adding images: %v\n", err)
 			}
 		case "m":
-			newMapFile, err := manageMapFiles(ctx, reader)
-			if err != nil {
+			if newMapFile, err := manageMapFiles(ctx, reader); err != nil {
 				fmt.Printf("Error managing map files: %v\n", err)
 			} else {
-				// Update context with new map file
 				ctx = context.WithValue(ctx, mapFileKey, newMapFile)
 			}
 		case "d":
@@ -794,7 +768,6 @@ func mainMenu(ctx context.Context) error {
 		default:
 			fmt.Println("Invalid option. Please try again.")
 		}
-
 		fmt.Println()
 	}
 }
@@ -837,13 +810,10 @@ func manageMapFiles(ctx context.Context, reader *bufio.Reader) (string, error) {
 			return "", fmt.Errorf("failed to read input: %w", err)
 		}
 
-		input = strings.TrimSpace(input)
-
-		if strings.ToLower(input) == "q" {
+		switch strings.ToLower(strings.TrimSpace(input)) {
+		case "q":
 			return currentMapFile, nil
-		}
-
-		if strings.ToLower(input) == "n" {
+		case "n":
 			fmt.Print("Enter new map file name: ")
 			newName, err := reader.ReadString('\n')
 			if err != nil {
@@ -855,10 +825,9 @@ func manageMapFiles(ctx context.Context, reader *bufio.Reader) (string, error) {
 				continue
 			}
 			if !strings.HasSuffix(newName, ".map") {
-				newName = newName + ".map"
+				newName += ".map"
 			}
 
-			// Create the new map file
 			mapFilePath := filepath.Join(notesPath, newName)
 			if _, err := os.Stat(mapFilePath); os.IsNotExist(err) {
 				if err := os.WriteFile(mapFilePath, []byte{}, 0644); err != nil {
@@ -867,32 +836,27 @@ func manageMapFiles(ctx context.Context, reader *bufio.Reader) (string, error) {
 				}
 			}
 
-			// Set as current
 			if err := config.SetMapFile(newName); err != nil {
 				fmt.Printf("Failed to set map file: %v\n", err)
 				continue
 			}
-
 			fmt.Printf("Created and switched to map file: %s\n", newName)
 			return newName, nil
-		}
+		default:
+			var idx int
+			if _, err := fmt.Sscanf(input, "%d", &idx); err != nil || idx < 1 || idx > len(mapFiles) {
+				fmt.Println("Invalid option.")
+				continue
+			}
 
-		// Try to parse as number
-		idx := -1
-		fmt.Sscanf(input, "%d", &idx)
-		if idx < 1 || idx > len(mapFiles) {
-			fmt.Println("Invalid option.")
-			continue
+			selectedMapFile := mapFiles[idx-1]
+			if err := config.SetMapFile(selectedMapFile); err != nil {
+				fmt.Printf("Failed to set map file: %v\n", err)
+				continue
+			}
+			fmt.Printf("Switched to map file: %s\n", selectedMapFile)
+			return selectedMapFile, nil
 		}
-
-		selectedMapFile := mapFiles[idx-1]
-		if err := config.SetMapFile(selectedMapFile); err != nil {
-			fmt.Printf("Failed to set map file: %v\n", err)
-			continue
-		}
-
-		fmt.Printf("Switched to map file: %s\n", selectedMapFile)
-		return selectedMapFile, nil
 	}
 }
 
@@ -906,17 +870,16 @@ func deleteNotes(ctx context.Context, reader *bufio.Reader) error {
 	notesDir := filepath.Join(notesPath, "notes")
 
 	fmt.Println("\nDelete notes mode. Enter note filenames to delete one at a time.")
-	fmt.Println("Press 'q' to quit.")
+	fmt.Println("Press 'Q' to quit.")
 	fmt.Println()
 
 	for {
-		// Load current entries from map
-		entries, err := listNotes(notesPath, mapFile)
+		entries, err := loadNotes(notesPath, mapFile)
 		if err != nil {
 			return err
 		}
 
-		fmt.Print("Enter note filename to delete (or 'q' to quit): ")
+		fmt.Print("Enter note filename to delete (or 'Q' to quit): ")
 		input, err := reader.ReadString('\n')
 		if err != nil {
 			return fmt.Errorf("failed to read input: %w", err)
@@ -932,7 +895,6 @@ func deleteNotes(ctx context.Context, reader *bufio.Reader) error {
 			break
 		}
 
-		// Check if file exists in map
 		var foundEntry *noteEntry
 		for i := range entries {
 			if entries[i].filename == input {
@@ -947,61 +909,23 @@ func deleteNotes(ctx context.Context, reader *bufio.Reader) error {
 			continue
 		}
 
-		// Delete the actual file
 		filePath := filepath.Join(notesDir, foundEntry.filename)
 		if _, err := os.Stat(filePath); os.IsNotExist(err) {
 			fmt.Printf("Note file does not exist: %s\n", foundEntry.filename)
-			// Still remove from map
+		} else if err := os.Remove(filePath); err != nil {
+			fmt.Printf("Failed to delete file: %v\n", err)
+			continue
 		} else {
-			if err := os.Remove(filePath); err != nil {
-				fmt.Printf("Failed to delete file: %v\n", err)
-				continue
-			}
 			fmt.Printf("Deleted file: %s\n", filePath)
 		}
 
-		// Remove from map file
-		notesMapFile := filepath.Join(notesPath, mapFile)
-		data, err := os.ReadFile(notesMapFile)
-		if err == nil {
-			var newEntries []noteEntry
-			lines := strings.Split(string(data), "\n")
-			for _, line := range lines {
-				if line = strings.TrimSpace(line); line != "" {
-					entry := parseNoteLine(line)
-					if entry.filename != foundEntry.filename {
-						newEntries = append(newEntries, entry)
-					}
-				}
-			}
-
-			// Re-sort entries
-			sort.Slice(newEntries, func(i, j int) bool {
-				if newEntries[i].firstTag != newEntries[j].firstTag {
-					return newEntries[i].firstTag < newEntries[j].firstTag
-				}
-				return newEntries[i].filename < newEntries[j].filename
-			})
-
-			file, err := os.Create(notesMapFile)
-			if err == nil {
-				defer file.Close()
-				for _, entry := range newEntries {
-					var line string
-					if len(entry.tags) > 0 {
-						line = fmt.Sprintf("%s [%s]\n", entry.filename, strings.Join(entry.tags, ","))
-					} else {
-						line = fmt.Sprintf("%s\n", entry.filename)
-					}
-					file.WriteString(line)
-				}
-				fmt.Println("Removed from map.")
-			}
+		if err := removeNoteFromMap(notesPath, mapFile, foundEntry.filename); err != nil {
+			fmt.Printf("Failed to remove from map: %v\n", err)
+		} else {
+			fmt.Println("Removed from map.")
 		}
-
 		fmt.Println()
 	}
-
 	return nil
 }
 
@@ -1009,12 +933,12 @@ func main() {
 	log.SetFlags(log.Flags() &^ (log.Ldate | log.Ltime))
 
 	app := &cli.Command{
-		Name:    "notetree",
-		Version: appVersion,
-		Usage:   "A simple CLI app for managing notes",
+		Name:      "notetree",
+		Version:   appVersion,
+		Usage:     "A simple CLI app for managing notes",
+		UsageText: "notetree [command] [options]",
 		Before: func(ctx context.Context, c *cli.Command) (context.Context, error) {
-			newCtx, err := setupConfig(ctx)
-			return newCtx, err
+			return setupConfig(ctx)
 		},
 		Action: func(ctx context.Context, c *cli.Command) error {
 			return mainMenu(ctx)
@@ -1044,9 +968,9 @@ func main() {
 				},
 			},
 			{
-				Name:    "read",
-				Usage:   "Read and concatenate notes",
-				ArgsUsage: "[tag]",
+				Name:        "read",
+				Usage:       "Read and concatenate notes",
+				ArgsUsage:   "[tag]",
 				Description: "Concatenates all notes into a temporary file and displays them.\nIf a tag is provided, only notes with that tag are included.",
 				Flags: []cli.Flag{
 					&cli.BoolFlag{
@@ -1056,14 +980,11 @@ func main() {
 					},
 				},
 				Action: func(ctx context.Context, c *cli.Command) error {
-					filterTag := c.Args().First()
-					includeFilenames := c.Bool("filenames")
-					return readNotes(ctx, filterTag, includeFilenames)
+					return readNotes(ctx, c.Args().First(), c.Bool("filenames"))
 				},
 			},
 		},
 	}
 
-	err := app.Run(context.Background(), os.Args);
-	crash(err, "Error running notetree")
+	crash(app.Run(context.Background(), os.Args), "Error running notetree")
 }
