@@ -419,12 +419,18 @@ func readNotes(ctx context.Context, filterTag string) error {
 	}
 	tmpFile.Close()
 
-	content, err := os.ReadFile(tmpPath)
+	markdownReader, err := config.GetMarkdownReader()
 	if err != nil {
-		return fmt.Errorf("failed to read temporary file: %w", err)
+		return fmt.Errorf("failed to get markdown reader: %w", err)
 	}
 
-	fmt.Println(string(content))
+	cmd := exec.Command(markdownReader, tmpPath)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to run markdown reader: %w", err)
+	}
 
 	return nil
 }
