@@ -30,6 +30,7 @@ type contextKey string
 const (
 	notesPathKey contextKey = "notes_path"
 	mapFileKey   contextKey = "map_file"
+	appVersion   string     = "0.1.0"
 )
 
 func setupConfig(ctx context.Context) (context.Context, error) {
@@ -732,7 +733,7 @@ func mainMenu(ctx context.Context) error {
 
 	for {
 		currentMapFile := GetMapFile(ctx)
-		fmt.Println("Notetree Main Menu:")
+		fmt.Printf("notetree version %s\n", appVersion)
 		fmt.Printf("Current map file: \033[1m%s\033[0m\n", currentMapFile)
 		fmt.Println("  (A)dd notes")
 		fmt.Println("  (E)dit notes")
@@ -895,7 +896,7 @@ func main() {
 
 	app := &cli.Command{
 		Name:    "notetree",
-		Version: "0.1.0",
+		Version: appVersion,
 		Usage:   "A simple CLI app for managing notes",
 		Before: func(ctx context.Context, c *cli.Command) (context.Context, error) {
 			newCtx, err := setupConfig(ctx)
