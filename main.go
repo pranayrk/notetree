@@ -736,8 +736,9 @@ func mainMenu(ctx context.Context) error {
 		fmt.Printf("notetree version %s\n", appVersion)
 		fmt.Printf("Current map file: \033[1m%s\033[0m\n", currentMapFile)
 		fmt.Println("  (A)dd notes")
-		fmt.Println("  (E)dit notes")
 		fmt.Println("  (R)ead notes")
+		fmt.Println("  (E)dit notes")
+		fmt.Println("  (D)elete notes")
 		fmt.Println("  (I)mage copy")
 		fmt.Println("  (M)ap files")
 		fmt.Println("  (Q)uit")
@@ -782,6 +783,10 @@ func mainMenu(ctx context.Context) error {
 			} else {
 				// Update context with new map file
 				ctx = context.WithValue(ctx, mapFileKey, newMapFile)
+			}
+		case "d":
+			if err := deleteNotes(ctx, reader); err != nil {
+				fmt.Printf("Error deleting notes: %v\n", err)
 			}
 		case "q":
 			fmt.Println("Goodbye!")
@@ -889,6 +894,115 @@ func manageMapFiles(ctx context.Context, reader *bufio.Reader) (string, error) {
 		fmt.Printf("Switched to map file: %s\n", selectedMapFile)
 		return selectedMapFile, nil
 	}
+}
+
+func deleteNotes(ctx context.Context, reader *bufio.Reader) error {
+	notesPath := GetNotesPath(ctx)
+	mapFile := GetMapFile(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
+	}
+
+	notesDir := filepath.Join(notesPath, "notes")
+
+	fmt.Println("\nDelete notes mode. Enter note filenames to delete one at a time.")
+	fmt.Println("Press 'q' to quit.")
+	fmt.Println()
+
+	for {
+		// Load current entries from map
+		entries, err := listNotes(notesPath, mapFile)
+		if err != nil {
+			return err
+		}
+
+		fmt.Print("Enter note filename to delete (or 'q' to quit): ")
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("failed to read input: %w", err)
+		}
+
+		input = strings.TrimSpace(input)
+		if input == "" {
+			continue
+		}
+
+		if strings.ToLower(input) == "q" {
+			fmt.Println("Exiting delete mode.")
+			break
+		}
+
+		// Check if file exists in map
+		var foundEntry *noteEntry
+		for i := range entries {
+			if entries[i].filename == input {
+				foundEntry = &entries[i]
+				break
+			}
+		}
+
+		if foundEntry == nil {
+			fmt.Printf("Note not found in map: %s\n", input)
+			fmt.Println()
+			continue
+		}
+
+		// Delete the actual file
+		filePath := filepath.Join(notesDir, foundEntry.filename)
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			fmt.Printf("Note file does not exist: %s\n", foundEntry.filename)
+			// Still remove from map
+		} else {
+			if err := os.Remove(filePath); err != nil {
+				fmt.Printf("Failed to delete file: %v\n", err)
+				continue
+			}
+			fmt.Printf("Deleted file: %s\n", filePath)
+		}
+
+		// Remove from map file
+		notesMapFile := filepath.Join(notesPath, mapFile)
+		data, err := os.ReadFile(notesMapFile)
+		if err == nil {
+			var newEntries []noteEntry
+			lines := strings.Split(string(data), "\n")
+			for _, line := range lines {
+				if line = strings.TrimSpace(line); line != "" {
+					entry := parseNoteLine(line)
+					if entry.filename != foundEntry.filename {
+						newEntries = append(newEntries, entry)
+					}
+				}
+			}
+
+			// Re-sort entries
+			sort.Slice(newEntries, func(i, j int) bool {
+				if newEntries[i].firstTag != newEntries[j].firstTag {
+					return newEntries[i].firstTag < newEntries[j].firstTag
+				}
+				return newEntries[i].filename < newEntries[j].filename
+			})
+
+			file, err := os.Create(notesMapFile)
+			if err == nil {
+				defer file.Close()
+				for _, entry := range newEntries {
+					var line string
+					if len(entry.tags) > 0 {
+						line = fmt.Sprintf("%s [%s]\n", entry.filename, strings.Join(entry.tags, ","))
+					} else {
+						line = fmt.Sprintf("%s\n", entry.filename)
+					}
+					file.WriteString(line)
+				}
+				fmt.Println("Removed from map.")
+			}
+		}
+
+		fmt.Println()
+	}
+
+	return nil
 }
 
 func main() {
