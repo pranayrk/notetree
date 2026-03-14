@@ -610,7 +610,9 @@ func readNotes(ctx context.Context, filterTag string, includeFilenames bool) err
 	if err != nil {
 		return err
 	}
-	defer cleanup()
+	if cleanup != nil {
+		defer cleanup()
+	}
 
 	if tmpPath == "" {
 		if filterTag != "" {
@@ -638,7 +640,9 @@ func exportNotes(ctx context.Context, filterTag string) error {
 	if err != nil {
 		return err
 	}
-	defer cleanup()
+	if cleanup != nil {
+		defer cleanup()
+	}
 
 	if tmpPath == "" {
 		if filterTag != "" {
@@ -727,8 +731,17 @@ func mainMenu(ctx context.Context) error {
 			tagInput, err := reader.ReadString('\n')
 			if err != nil {
 				fmt.Printf("Error reading tag: %v\n", err)
-			} else if err := readNotes(ctx, strings.TrimSpace(tagInput), false); err != nil {
-				fmt.Printf("Error reading notes: %v\n", err)
+			} else {
+				fmt.Print("Include filenames in output? (y for yes, Enter for no): ")
+				includeInput, err := reader.ReadString('\n')
+				if err != nil {
+					fmt.Printf("Error reading option: %v\n", err)
+				} else {
+					includeFilenames := strings.ToLower(strings.TrimSpace(includeInput)) == "y"
+					if err := readNotes(ctx, strings.TrimSpace(tagInput), includeFilenames); err != nil {
+						fmt.Printf("Error reading notes: %v\n", err)
+					}
+				}
 			}
 		case "x":
 			fmt.Print("Enter tag to filter (or Enter to export all): ")
