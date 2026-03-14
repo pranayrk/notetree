@@ -710,7 +710,7 @@ func mainMenu(ctx context.Context) error {
 		fmt.Println("  (A)dd notes")
 		fmt.Println("  (E)dit notes")
 		fmt.Println("  (R)ead notes")
-		fmt.Println("  (I)mage add")
+		fmt.Println("  (I)mage copy")
 		fmt.Println("  (Q)uit")
 		fmt.Println()
 
