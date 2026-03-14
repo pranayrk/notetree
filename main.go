@@ -21,26 +21,22 @@ func crash(err error, text string) {
 
 func ensureConfigFile() error {
 	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
-	}
+	crash(err, "failed to get home directory")
 
 	configDir := filepath.Join(homeDir, ".config", "notetree")
 	configFile := filepath.Join(configDir, "notetree.conf")
 
-	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		if err := os.MkdirAll(configDir, 0755); err != nil {
-			return fmt.Errorf("failed to create config directory: %w", err)
-		}
-
-		f, err := os.Create(configFile)
-		if err != nil {
-			return fmt.Errorf("failed to create config file: %w", err)
-		}
-		defer f.Close()
-
-		fmt.Printf("Created config file at %s\n", configFile)
+	if _, err := os.Stat(configFile); !os.IsNotExist(err) {
+		return
 	}
+	err := os.MkdirAll(configDir, 0755);
+	crash(err, "failed to create config directory")
+
+	f, err := os.Create(configFile)
+	crash(err, "failed to create config file")
+	defer f.Close()
+
+	fmt.Printf("Created config file at %s\n", configFile)
 
 	return nil
 }
