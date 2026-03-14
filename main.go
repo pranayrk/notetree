@@ -114,6 +114,73 @@ func createNote(ctx context.Context) error {
 	return nil
 }
 
+func addNoteToMap(notesPath, filename string) error {
+	notesMapFile := filepath.Join(notesPath, "notes.map")
+
+	file, err := os.OpenFile(notesMapFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open notes.map: %w", err)
+	}
+	defer file.Close()
+
+	_, err = fmt.Fprintf(file, "%s\n", filename)
+	if err != nil {
+		return fmt.Errorf("failed to write to notes.map: %w", err)
+	}
+
+	return nil
+}
+
+func createNotesInteractive(ctx context.Context) error {
+	notesPath := GetNotesPath(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
+	}
+
+	notesDir := filepath.Join(notesPath, "notes")
+
+	reader := bufio.NewReader(os.Stdin)
+
+	for {
+		fmt.Print("Create new note? (Enter to create, 'q' to quit): ")
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("failed to read input: %w", err)
+		}
+
+		input = strings.TrimSpace(input)
+		if input == "" {
+			filename := generateNoteFilename()
+			filePath := filepath.Join(notesDir, filename)
+
+			file, err := os.Create(filePath)
+			if err != nil {
+				fmt.Printf("Failed to create note file: %v\n", err)
+				continue
+			}
+			file.Close()
+
+			if err := addNoteToMap(notesPath, filename); err != nil {
+				fmt.Printf("Failed to add note to map: %v\n", err)
+			}
+
+			fmt.Printf("Created note: %s\n\n\n", filepath.Base(filePath))
+
+			if err := openEditor(filePath); err != nil {
+				fmt.Printf("Failed to open editor: %v\n", err)
+			}
+			continue
+		}
+
+		if strings.ToLower(input) == "q" {
+			fmt.Println("Exiting note add mode.")
+			break
+		}
+	}
+
+	return nil
+}
+
 func addImages(ctx context.Context) error {
 	notesPath := GetNotesPath(ctx)
 	if notesPath == "" {
@@ -184,7 +251,7 @@ func main() {
 			return newCtx, err
 		},
 		Action: func(ctx context.Context, c *cli.Command) error {
-			return createNote(ctx)
+			return createNotesInteractive(ctx)
 		},
 		Commands: []*cli.Command{
 			{
@@ -192,7 +259,7 @@ func main() {
 				Aliases: []string{"a"},
 				Usage:   "Add a new note",
 				Action: func(ctx context.Context, c *cli.Command) error {
-					return createNote(ctx)
+					return createNotesInteractive(ctx)
 				},
 			},
 			{
