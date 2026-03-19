@@ -275,10 +275,6 @@ func ensureNotesStructure(notesPath, mapFile string) error {
 	return nil
 }
 
-func generateNoteFilename() string {
-	return time.Now().Format("2006-01-02_15-04-05") + ".md"
-}
-
 func openEditor(filePath string) error {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
@@ -331,15 +327,6 @@ func expandNestedTags(tag string) []string {
 		tags = append(tags, strings.Join(parts[:i+1], "/"))
 	}
 	return tags
-}
-
-func hasTag(entryTags []string, targetTag string) bool {
-	for _, tag := range entryTags {
-		if tag == targetTag {
-			return true
-		}
-	}
-	return false
 }
 
 func parseNoteLine(line string) noteEntry {
@@ -403,7 +390,7 @@ func createNotesInteractive(ctx context.Context) error {
 
 		filename := customFilename
 		if filename == "" {
-			filename = generateNoteFilename()
+			filename = time.Now().Format("2006-01-02_15-04-05") + ".md"
 		} else if !strings.HasSuffix(filename, ".md") {
 			filename += ".md"
 		}
@@ -815,8 +802,15 @@ func buildNotesFile(ctx context.Context, filterTag string, includeFilenames bool
 		}
 		entry := parseNoteLine(line)
 		if entry.filename != "" {
-			if filterTag == "" || hasTag(entry.tags, filterTag) {
+			if filterTag == "" {
 				entries = append(entries, entry)
+			} else {
+				for _, tag := range entry.tags {
+					if tag == filterTag {
+						entries = append(entries, entry)
+						break
+					}
+				}
 			}
 		}
 	}
@@ -1052,15 +1046,6 @@ func mainMenu(ctx context.Context) error {
 // Entry Point
 // ============================================================================
 
-func crash(err error, text string) {
-	if err != nil {
-		if text != "" {
-			err = fmt.Errorf("error: %q:\n %w", text, err)
-		}
-		log.Fatal(err)
-	}
-}
-
 func main() {
 	log.SetFlags(log.Flags() &^ (log.Ldate | log.Ltime))
 
@@ -1124,5 +1109,7 @@ func main() {
 		},
 	}
 
-	crash(app.Run(context.Background(), os.Args), "Error running notetree")
+	if err := app.Run(context.Background(), os.Args); err != nil {
+		log.Fatal(err)
+	}
 }
