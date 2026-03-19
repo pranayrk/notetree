@@ -716,8 +716,11 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 						fmt.Printf("Error organizing notes by tag: %v\n", err)
 					}
 					// Reload entries to reflect changes
-					entries, _ = loadNotes(notesPath, mapFile)
-					filteredEntries, _ = filterEntries(entries, filterTag, untaggedOnly)
+					if entries, err = loadNotes(notesPath, mapFile); err != nil {
+						fmt.Printf("Failed to reload notes: %v\n", err)
+						return err
+					}
+					filteredEntries = filterEntries(entries, filterTag, untaggedOnly)
 				}
 			}
 		case "d", "delete":
@@ -738,8 +741,11 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 							fmt.Printf("Error organizing notes by tag: %v\n", err)
 						}
 						// Reload entries
-						entries, _ = loadNotes(notesPath, mapFile)
-						filteredEntries, _ = filterEntries(entries, filterTag, untaggedOnly)
+						if entries, err = loadNotes(notesPath, mapFile); err != nil {
+							fmt.Printf("Failed to reload notes: %v\n", err)
+							return err
+						}
+						filteredEntries = filterEntries(entries, filterTag, untaggedOnly)
 						// Don't increment i, stay at same position
 						if i >= len(filteredEntries) {
 							i-- // If we deleted the last entry, move back
@@ -755,8 +761,11 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 					fmt.Printf("Error organizing notes by tag: %v\n", err)
 				}
 				// Reload entries
-				entries, _ = loadNotes(notesPath, mapFile)
-				filteredEntries, _ = filterEntries(entries, filterTag, untaggedOnly)
+				if entries, err = loadNotes(notesPath, mapFile); err != nil {
+					fmt.Printf("Failed to reload notes: %v\n", err)
+					return err
+				}
+				filteredEntries = filterEntries(entries, filterTag, untaggedOnly)
 				// Don't increment i, stay at same position
 				if i >= len(filteredEntries) {
 					i-- // If we moved the last entry, move back
@@ -800,7 +809,7 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 }
 
 // filterEntries filters entries by tag or untagged status
-func filterEntries(entries []noteEntry, filterTag string, untaggedOnly bool) ([]noteEntry, error) {
+func filterEntries(entries []noteEntry, filterTag string, untaggedOnly bool) []noteEntry {
 	var filtered []noteEntry
 	for _, entry := range entries {
 		if untaggedOnly {
@@ -818,7 +827,7 @@ func filterEntries(entries []noteEntry, filterTag string, untaggedOnly bool) ([]
 			}
 		}
 	}
-	return filtered, nil
+	return filtered
 }
 
 func manageMapFiles(ctx context.Context, reader *bufio.Reader) (string, error) {
@@ -1226,6 +1235,16 @@ func main() {
 						filterTag = ""
 					}
 					return browseNotesInteractive(ctx, filterTag, untaggedOnly)
+				},
+			},
+			{
+				Name:        "export",
+				Aliases:     []string{"e"},
+				Usage:       "Export notes to PDF",
+				ArgsUsage:   "[tag]",
+				Description: "Exports all notes to a PDF file.\nIf a tag is provided, only notes with that tag are included.",
+				Action: func(ctx context.Context, c *cli.Command) error {
+					return exportNotes(ctx, c.Args().First())
 				},
 			},
 			{
