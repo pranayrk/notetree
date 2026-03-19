@@ -854,7 +854,7 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 		contentStr := string(content)
 		if len(contentStr) > 2000 {
 			fmt.Println(contentStr[:2000])
-			fmt.Println("\n... (content truncated, use 'v' to view full content)")
+			fmt.Println("\n... (content truncated, use (V) to view full content)")
 		} else {
 			fmt.Println(contentStr)
 		}
@@ -862,12 +862,12 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 
 		// Show action menu
 		fmt.Println("Actions:")
-		fmt.Println("  (e)dit note")
-		fmt.Println("  (t)ags update")
-		fmt.Println("  (d)elete note")
-		fmt.Println("  (m)ove to another map file")
-		fmt.Println("  (v)iew full content in markdown reader")
-		fmt.Println("  (n)ext / (p)revious / (q)uit")
+		fmt.Println("  (E)dit note")
+		fmt.Println("  (T)ags update")
+		fmt.Println("  (D)elete note")
+		fmt.Println("  (M)ove to another map file")
+		fmt.Println("  (V)iew full content in markdown reader")
+		fmt.Println("  (N)ext / (P)revious / (Q)uit")
 		fmt.Println()
 
 		fmt.Print("Select action: ")
