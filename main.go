@@ -320,15 +320,6 @@ func getFirstTag(tags []string) string {
 	return tag
 }
 
-func expandNestedTags(tag string) []string {
-	parts := strings.Split(tag, "/")
-	tags := make([]string, 0, len(parts))
-	for i := range parts {
-		tags = append(tags, strings.Join(parts[:i+1], "/"))
-	}
-	return tags
-}
-
 func parseNoteLine(line string) noteEntry {
 	line = strings.TrimSpace(line)
 	if line == "" || strings.HasPrefix(line, "#") {
@@ -444,126 +435,6 @@ func createNotesInteractive(ctx context.Context) error {
 	return nil
 }
 
-func editNotesInteractive(ctx context.Context) error {
-	notesPath := getNotesPath(ctx)
-	if notesPath == "" {
-		return fmt.Errorf("notes path not configured")
-	}
-
-	mapFile := getMapFile(ctx)
-	notesDir := filepath.Join(notesPath, "notes")
-	reader := bufio.NewReader(os.Stdin)
-
-	entries, err := loadNotes(notesPath, mapFile)
-	if err != nil {
-		return err
-	}
-
-	if len(entries) == 0 {
-		fmt.Println("No notes found.")
-		return nil
-	}
-
-	fmt.Println("Interactive note edit mode. Enter note filename to edit.")
-	fmt.Println("Press 'Q' to quit.")
-	fmt.Println()
-
-	for {
-		fmt.Print("Enter note filename to edit (or 'Q' to quit): ")
-		input, err := reader.ReadString('\n')
-		if err != nil {
-			return fmt.Errorf("failed to read input: %w", err)
-		}
-
-		input = strings.TrimSpace(input)
-		if input == "" {
-			continue
-		}
-
-		if strings.ToLower(input) == "q" {
-			fmt.Println("Exiting note edit mode.")
-			break
-		}
-
-		var foundEntry *noteEntry
-		for i := range entries {
-			if entries[i].filename == input {
-				foundEntry = &entries[i]
-				break
-			}
-		}
-
-		if foundEntry == nil {
-			fmt.Printf("Note not found: %s\n", input)
-			fmt.Println()
-			continue
-		}
-
-		filePath := filepath.Join(notesDir, foundEntry.filename)
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			fmt.Printf("Note file does not exist: %s\n", foundEntry.filename)
-			fmt.Println()
-			continue
-		}
-
-		if err := openEditor(filePath); err != nil {
-			fmt.Printf("Failed to open editor: %v\n", err)
-		}
-
-		info, err := os.Stat(filePath)
-		if err != nil {
-			fmt.Printf("Failed to stat file: %v\n", err)
-			continue
-		}
-
-		if info.Size() == 0 {
-			os.Remove(filePath)
-			if err := removeNoteFromMap(notesPath, mapFile, foundEntry.filename); err != nil {
-				fmt.Printf("Failed to remove from map: %v\n", err)
-			}
-			fmt.Println("Note is empty, deleted and removed from map.")
-			if entries, err = loadNotes(notesPath, mapFile); err != nil {
-				fmt.Printf("Failed to reload notes: %v\n", err)
-			}
-			fmt.Println()
-			continue
-		}
-
-		currentTags := strings.Join(foundEntry.tags, ",")
-		fmt.Printf("Current tags: %s\n", currentTags)
-		fmt.Print("Enter new tags (comma-separated, or press Enter to keep current): ")
-		tagsInput, err := reader.ReadString('\n')
-		if err != nil {
-			fmt.Printf("Failed to read tags: %v\n", err)
-			continue
-		}
-
-		tagsInput = strings.TrimSpace(tagsInput)
-		var newTags []string
-		if tagsInput == "" {
-			newTags = foundEntry.tags
-		} else {
-			for _, tag := range strings.Split(tagsInput, ",") {
-				tag = strings.TrimSpace(tag)
-				if tag != "" {
-					newTags = append(newTags, expandNestedTags(tag)...)
-				}
-			}
-		}
-
-		if err := updateNoteTags(notesPath, mapFile, foundEntry.filename, newTags); err != nil {
-			fmt.Printf("Failed to update tags: %v\n", err)
-		} else {
-			fmt.Println("Tags updated.")
-			if entries, err = loadNotes(notesPath, mapFile); err != nil {
-				fmt.Printf("Failed to reload notes: %v\n", err)
-			}
-		}
-		fmt.Println()
-	}
-	return nil
-}
-
 func addImages(ctx context.Context) error {
 	notesPath := getNotesPath(ctx)
 	if notesPath == "" {
@@ -614,75 +485,6 @@ func addImages(ctx context.Context) error {
 			continue
 		}
 		fmt.Printf("Added image: %s\n", destPath)
-	}
-	return nil
-}
-
-func deleteNotes(ctx context.Context, reader *bufio.Reader) error {
-	notesPath := getNotesPath(ctx)
-	mapFile := getMapFile(ctx)
-	if notesPath == "" {
-		return fmt.Errorf("notes path not configured")
-	}
-
-	notesDir := filepath.Join(notesPath, "notes")
-
-	fmt.Println("\nDelete notes mode. Enter note filenames to delete one at a time.")
-	fmt.Println("Press 'Q' to quit.")
-	fmt.Println()
-
-	for {
-		entries, err := loadNotes(notesPath, mapFile)
-		if err != nil {
-			return err
-		}
-
-		fmt.Print("Enter note filename to delete (or 'Q' to quit): ")
-		input, err := reader.ReadString('\n')
-		if err != nil {
-			return fmt.Errorf("failed to read input: %w", err)
-		}
-
-		input = strings.TrimSpace(input)
-		if input == "" {
-			continue
-		}
-
-		if strings.ToLower(input) == "q" {
-			fmt.Println("Exiting delete mode.")
-			break
-		}
-
-		var foundEntry *noteEntry
-		for i := range entries {
-			if entries[i].filename == input {
-				foundEntry = &entries[i]
-				break
-			}
-		}
-
-		if foundEntry == nil {
-			fmt.Printf("Note not found in map: %s\n", input)
-			fmt.Println()
-			continue
-		}
-
-		filePath := filepath.Join(notesDir, foundEntry.filename)
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			fmt.Printf("Note file does not exist: %s\n", foundEntry.filename)
-		} else if err := os.Remove(filePath); err != nil {
-			fmt.Printf("Failed to delete file: %v\n", err)
-			continue
-		} else {
-			fmt.Printf("Deleted file: %s\n", filePath)
-		}
-
-		if err := removeNoteFromMap(notesPath, mapFile, foundEntry.filename); err != nil {
-			fmt.Printf("Failed to remove from map: %v\n", err)
-		} else {
-			fmt.Println("Removed from map.")
-		}
-		fmt.Println()
 	}
 	return nil
 }
@@ -1291,8 +1093,6 @@ func mainMenu(ctx context.Context) error {
 		fmt.Println("  (B)rowse notes")
 		fmt.Println("  (R)ead notes")
 		fmt.Println("  (X)port note PDF")
-		fmt.Println("  (E)dit notes")
-		fmt.Println("  (D)elete notes")
 		fmt.Println("  (I)mage copy")
 		fmt.Println("  (M)ap files")
 		fmt.Println("  (Q)uit")
@@ -1354,12 +1154,6 @@ func mainMenu(ctx context.Context) error {
 			} else if err := exportNotes(ctx, strings.TrimSpace(tagInput)); err != nil {
 				fmt.Printf("Error exporting notes: %v\n", err)
 			}
-		case "e":
-			if err := editNotesInteractive(ctx); err != nil {
-				fmt.Printf("Error in edit mode: %v\n", err)
-			} else if err := collectNotesByTag(ctx); err != nil {
-				fmt.Printf("Error organizing notes by tag: %v\n", err)
-			}
 		case "i":
 			if err := addImages(ctx); err != nil {
 				fmt.Printf("Error adding images: %v\n", err)
@@ -1369,10 +1163,6 @@ func mainMenu(ctx context.Context) error {
 				fmt.Printf("Error managing map files: %v\n", err)
 			} else {
 				ctx = context.WithValue(ctx, mapFileKey, newMapFile)
-			}
-		case "d":
-			if err := deleteNotes(ctx, reader); err != nil {
-				fmt.Printf("Error deleting notes: %v\n", err)
 			}
 		case "q":
 			fmt.Println("Goodbye!")
@@ -1427,16 +1217,6 @@ func main() {
 						filterTag = ""
 					}
 					return browseNotesInteractive(ctx, filterTag, untaggedOnly)
-				},
-			},
-			{
-				Name:    "edit",
-				Usage:   "Edit an existing note",
-				Action: func(ctx context.Context, c *cli.Command) error {
-					return editNotesInteractive(ctx)
-				},
-				After: func(ctx context.Context, cmd *cli.Command) error {
-					return collectNotesByTag(ctx)
 				},
 			},
 			{
