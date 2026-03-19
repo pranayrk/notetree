@@ -833,7 +833,9 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 	}
 	fmt.Println()
 
-	for i, entry := range filteredEntries {
+	i := 0
+	for i < len(filteredEntries) {
+		entry := filteredEntries[i]
 		fmt.Printf("\n\033[1m[%d/%d] %s\033[0m\n", i+1, len(filteredEntries), entry.filename)
 		if len(entry.tags) > 0 {
 			fmt.Printf("Tags: \033[36m%s\033[0m\n", strings.Join(entry.tags, ", "))
@@ -847,6 +849,7 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 		content, err := os.ReadFile(filePath)
 		if err != nil {
 			fmt.Printf("Error reading file: %v\n", err)
+			i++
 			continue
 		}
 
@@ -900,7 +903,7 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 						tag = strings.TrimSpace(tag)
 						if tag != "" {
 							newTags = append(newTags, tag)
-											}
+						}
 					}
 				}
 				if err := updateNoteTags(notesPath, mapFile, entry.filename, newTags); err != nil {
@@ -929,7 +932,10 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 						// Reload entries
 						entries, _ = loadNotes(notesPath, mapFile)
 						filteredEntries, _ = filterEntries(entries, filterTag, untaggedOnly)
-						i-- // Adjust index since we removed an entry
+						// Don't increment i, stay at same position
+						if i >= len(filteredEntries) {
+							i-- // If we deleted the last entry, move back
+						}
 					}
 				}
 			}
@@ -940,7 +946,10 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 				// Reload entries
 				entries, _ = loadNotes(notesPath, mapFile)
 				filteredEntries, _ = filterEntries(entries, filterTag, untaggedOnly)
-				i-- // Adjust index since current entry was moved
+				// Don't increment i, stay at same position
+				if i >= len(filteredEntries) {
+					i-- // If we moved the last entry, move back
+				}
 			}
 		case "v", "view":
 			markdownReader, err := config.GetMarkdownReader()
@@ -955,9 +964,15 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 					fmt.Printf("Failed to open markdown reader: %v\n", err)
 				}
 			}
+		case "n", "next":
+			i++
+			if i >= len(filteredEntries) {
+				fmt.Println("\nEnd of notes.")
+				return nil
+			}
 		case "p", "prev", "previous":
 			if i > 0 {
-				i-- // Will be incremented by loop
+				i--
 			} else {
 				fmt.Println("Already at first note.")
 			}
@@ -965,6 +980,8 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 			fmt.Println("Exiting browse mode.")
 			return nil
 		}
+
+		fmt.Println()
 	}
 
 	fmt.Println("\nEnd of notes.")
