@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -119,16 +118,9 @@ func loadNotes(notesPath, mapFile string) ([]noteEntry, error) {
 	return entries, nil
 }
 
-// saveNotes writes entries to the map file, sorted by tag and filename
+// saveNotes writes entries to the map file
 func saveNotes(notesPath, mapFile string, entries []noteEntry) error {
 	notesMapFile := filepath.Join(notesPath, mapFile)
-
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].firstTag != entries[j].firstTag {
-			return entries[i].firstTag < entries[j].firstTag
-		}
-		return entries[i].filename < entries[j].filename
-	})
 
 	file, err := os.Create(notesMapFile)
 	if err != nil {
