@@ -1101,7 +1101,7 @@ func mainMenu(ctx context.Context) error {
 		fmt.Println("  (A)dd notes")
 		fmt.Println("  (B)rowse notes")
 		fmt.Println("  (R)ead notes")
-		fmt.Println("  (X)port note PDF")
+		fmt.Println("  (E)xport note PDF")
 		fmt.Println("  (I)mage copy")
 		fmt.Println("  (M)ap files")
 		fmt.Println("  (Q)uit")
@@ -1155,7 +1155,7 @@ func mainMenu(ctx context.Context) error {
 					}
 				}
 			}
-		case "x":
+		case "e":
 			fmt.Print("Enter tag to filter (or Enter to export all): ")
 			tagInput, err := reader.ReadString('\n')
 			if err != nil {
