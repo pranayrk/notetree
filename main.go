@@ -1287,6 +1287,52 @@ func main() {
 					return nil
 				},
 			},
+			{
+				Name:    "pwd",
+				Usage:   "Print the notes directory path",
+				Action: func(ctx context.Context, c *cli.Command) error {
+					notesPath, err := config.GetNotesPathWithoutPrompt()
+					if err != nil {
+						return fmt.Errorf("failed to get notes path: %w", err)
+					}
+					if notesPath == "" {
+						return fmt.Errorf("notes path not configured, run 'notetree' to configure")
+					}
+					fmt.Println(notesPath)
+					return nil
+				},
+			},
+			{
+				Name:    "config",
+				Usage:   "Edit the configuration file",
+				Action: func(ctx context.Context, c *cli.Command) error {
+					configPath, err := config.GetConfigPath()
+					if err != nil {
+						return fmt.Errorf("failed to get config path: %w", err)
+					}
+
+					// Check if config file exists, create if not
+					if _, err := os.Stat(configPath); os.IsNotExist(err) {
+						if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+							return fmt.Errorf("failed to create config directory: %w", err)
+						}
+						if err := os.WriteFile(configPath, []byte{}, 0644); err != nil {
+							return fmt.Errorf("failed to create config file: %w", err)
+						}
+						fmt.Printf("Created config file: %s\n", configPath)
+					}
+
+					editor := os.Getenv("EDITOR")
+					if editor == "" {
+						editor = "vim"
+					}
+					cmd := exec.Command(editor, configPath)
+					cmd.Stdin = os.Stdin
+					cmd.Stdout = os.Stdout
+					cmd.Stderr = os.Stderr
+					return cmd.Run()
+				},
+			},
 		},
 	}
 

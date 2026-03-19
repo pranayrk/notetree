@@ -286,3 +286,17 @@ func SetVaultFile(vaultFile string) error {
 	config.VaultFile = vaultFile
 	return config.Save()
 }
+
+// GetConfigPath returns the path to the config file
+func GetConfigPath() (string, error) {
+	return getConfigPath()
+}
+
+// GetNotesPathWithoutPrompt returns the configured notes path without prompting
+func GetNotesPathWithoutPrompt() (string, error) {
+	config, err := Load()
+	if err != nil {
+		return "", err
+	}
+	return config.NotesPath, nil
+}
