@@ -209,6 +209,12 @@ func collectNotesByTag(ctx context.Context) error {
 		tagEntries[tag] = append(tagEntries[tag], entry)
 	}
 
+	// If no entries found, preserve the empty file
+	if len(tagOrder) == 0 {
+		fmt.Println("Notes organized by tag successfully.")
+		return nil
+	}
+
 	// Rewrite map file with entries grouped by tag
 	file, err := os.Create(notesMapFile)
 	if err != nil {
@@ -247,6 +253,10 @@ func collectNotesByTag(ctx context.Context) error {
 // ============================================================================
 
 func ensureNotesStructure(notesPath, mapFile string) error {
+	if notesPath == "" {
+		return fmt.Errorf("notes path is empty")
+	}
+
 	notesDir := filepath.Join(notesPath, "notes")
 	imagesDir := filepath.Join(notesPath, "images")
 	notesMapFile := filepath.Join(notesPath, mapFile)
@@ -308,7 +318,7 @@ func getFirstTag(tags []string) string {
 		return ""
 	}
 	tag := tags[0]
-	if idx := strings.Index(tag, "/"); idx != -1 {
+	if idx := strings.Index(tag, "/"); idx != -1 && idx > 0 {
 		return tag[:idx]
 	}
 	return tag
@@ -343,7 +353,12 @@ func parseNoteLine(line string) noteEntry {
 	if bracketIdx != -1 && strings.HasSuffix(line, "]") {
 		entry.filename = strings.TrimSpace(line[:bracketIdx])
 		tagsStr := strings.TrimSuffix(line[bracketIdx+1:], "]")
-		entry.tags = strings.Split(tagsStr, ",")
+		for _, tag := range strings.Split(tagsStr, ",") {
+			tag = strings.TrimSpace(tag)
+			if tag != "" {
+				entry.tags = append(entry.tags, tag)
+			}
+		}
 		entry.firstTag = getFirstTag(entry.tags)
 	} else {
 		entry.filename = line
@@ -402,8 +417,18 @@ func createNotesInteractive(ctx context.Context) error {
 
 		fmt.Printf("Created note: %s\n\n\n", filepath.Base(filePath))
 
-		if err := openEditor(filePath); err != nil {
-			fmt.Printf("Failed to open editor: %v\n", err)
+		editorErr := openEditor(filePath)
+		if editorErr != nil {
+			fmt.Printf("Failed to open editor: %v\n", editorErr)
+			fmt.Print("Continue without editing? (y to continue, Enter to retry): ")
+			choice, err := reader.ReadString('\n')
+			if err != nil {
+				fmt.Printf("Failed to read input: %v\n", err)
+				continue
+			}
+			if strings.ToLower(strings.TrimSpace(choice)) != "y" {
+				continue
+			}
 		}
 
 		info, err := os.Stat(filePath)
@@ -510,7 +535,9 @@ func editNotesInteractive(ctx context.Context) error {
 				fmt.Printf("Failed to remove from map: %v\n", err)
 			}
 			fmt.Println("Note is empty, deleted and removed from map.")
-			entries, _ = loadNotes(notesPath, mapFile)
+			if entries, err = loadNotes(notesPath, mapFile); err != nil {
+				fmt.Printf("Failed to reload notes: %v\n", err)
+			}
 			fmt.Println()
 			continue
 		}
@@ -541,7 +568,9 @@ func editNotesInteractive(ctx context.Context) error {
 			fmt.Printf("Failed to update tags: %v\n", err)
 		} else {
 			fmt.Println("Tags updated.")
-			entries, _ = loadNotes(notesPath, mapFile)
+			if entries, err = loadNotes(notesPath, mapFile); err != nil {
+				fmt.Printf("Failed to reload notes: %v\n", err)
+			}
 		}
 		fmt.Println()
 	}
@@ -897,6 +926,10 @@ func exportNotes(ctx context.Context, filterTag string) error {
 	}
 
 	// Generate PDF in same folder as map file so relative image paths work
+	if _, err := exec.LookPath("pandoc"); err != nil {
+		return fmt.Errorf("pandoc is not installed: %w", err)
+	}
+
 	tempPDF := filepath.Join(filepath.Dir(notesMapFile), filepath.Base(tmpPath)+".pdf")
 	cmd := exec.Command("pandoc", tmpPath, "--pdf-engine=typst", "-o", tempPDF)
 	cmd.Dir = filepath.Dir(notesMapFile)
@@ -905,7 +938,7 @@ func exportNotes(ctx context.Context, filterTag string) error {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		os.Remove(tempPDF)
-		return fmt.Errorf("failed to export PDF: %w", err)
+		return fmt.Errorf("failed to export PDF (ensure pandoc and typst are installed): %w", err)
 	}
 
 	// Move the PDF to the final output path
