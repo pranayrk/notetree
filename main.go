@@ -712,6 +712,9 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 					fmt.Printf("Failed to update tags: %v\n", err)
 				} else {
 					fmt.Println("Tags updated.")
+					if err := collectNotesByTag(ctx); err != nil {
+						fmt.Printf("Error organizing notes by tag: %v\n", err)
+					}
 					// Reload entries to reflect changes
 					entries, _ = loadNotes(notesPath, mapFile)
 					filteredEntries, _ = filterEntries(entries, filterTag, untaggedOnly)
@@ -731,6 +734,9 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 						fmt.Printf("Failed to remove from map: %v\n", err)
 					} else {
 						fmt.Println("Removed from map.")
+						if err := collectNotesByTag(ctx); err != nil {
+							fmt.Printf("Error organizing notes by tag: %v\n", err)
+						}
 						// Reload entries
 						entries, _ = loadNotes(notesPath, mapFile)
 						filteredEntries, _ = filterEntries(entries, filterTag, untaggedOnly)
@@ -745,6 +751,9 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 			if err := moveNoteToMap(ctx, reader, entry.filename); err != nil {
 				fmt.Printf("Failed to move note: %v\n", err)
 			} else {
+				if err := collectNotesByTag(ctx); err != nil {
+					fmt.Printf("Error organizing notes by tag: %v\n", err)
+				}
 				// Reload entries
 				entries, _ = loadNotes(notesPath, mapFile)
 				filteredEntries, _ = filterEntries(entries, filterTag, untaggedOnly)
