@@ -25,7 +25,7 @@ type contextKey string
 
 const (
 	notesPathKey contextKey = "notes_path"
-	mapFileKey   contextKey = "map_file"
+	vaultFileKey   contextKey = "vault_file"
 )
 
 // noteEntry represents a note with its metadata
@@ -46,8 +46,8 @@ func getNotesPath(ctx context.Context) string {
 	return ""
 }
 
-func getMapFile(ctx context.Context) string {
-	if v := ctx.Value(mapFileKey); v != nil {
+func getVaultFile(ctx context.Context) string {
+	if v := ctx.Value(vaultFileKey); v != nil {
 		return v.(string)
 	}
 	return ""
@@ -59,32 +59,32 @@ func setupConfig(ctx context.Context) (context.Context, error) {
 		return ctx, err
 	}
 
-	mapFile, err := config.GetMapFile(notesPath)
+	vaultFile, err := config.GetVaultFile(notesPath)
 	if err != nil {
 		return ctx, err
 	}
 
-	if err := ensureNotesStructure(notesPath, mapFile); err != nil {
+	if err := ensureNotesStructure(notesPath, vaultFile); err != nil {
 		return ctx, err
 	}
 
 	ctx = context.WithValue(ctx, notesPathKey, notesPath)
-	ctx = context.WithValue(ctx, mapFileKey, mapFile)
+	ctx = context.WithValue(ctx, vaultFileKey, vaultFile)
 	return ctx, nil
 }
 
 // ============================================================================
-// Data Layer - Map File Operations
+// Data Layer - Vault File Operations
 // ============================================================================
 
-func loadNotes(notesPath, mapFile string) ([]noteEntry, error) {
-	notesMapFile := filepath.Join(notesPath, mapFile)
-	data, err := os.ReadFile(notesMapFile)
+func loadNotes(notesPath, vaultFile string) ([]noteEntry, error) {
+	notesVaultFile := filepath.Join(notesPath, vaultFile)
+	data, err := os.ReadFile(notesVaultFile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []noteEntry{}, nil
 		}
-		return nil, fmt.Errorf("failed to read notes map: %w", err)
+		return nil, fmt.Errorf("failed to read notes vault: %w", err)
 	}
 
 	var entries []noteEntry
@@ -100,12 +100,12 @@ func loadNotes(notesPath, mapFile string) ([]noteEntry, error) {
 	return entries, nil
 }
 
-func saveNotes(notesPath, mapFile string, entries []noteEntry) error {
-	notesMapFile := filepath.Join(notesPath, mapFile)
+func saveNotes(notesPath, vaultFile string, entries []noteEntry) error {
+	notesVaultFile := filepath.Join(notesPath, vaultFile)
 
-	file, err := os.Create(notesMapFile)
+	file, err := os.Create(notesVaultFile)
 	if err != nil {
-		return fmt.Errorf("failed to open notes map: %w", err)
+		return fmt.Errorf("failed to open notes vault: %w", err)
 	}
 	defer file.Close()
 
@@ -117,14 +117,14 @@ func saveNotes(notesPath, mapFile string, entries []noteEntry) error {
 			line = fmt.Sprintf("%s\n", entry.filename)
 		}
 		if _, err := file.WriteString(line); err != nil {
-			return fmt.Errorf("failed to write to notes map: %w", err)
+			return fmt.Errorf("failed to write to notes vault: %w", err)
 		}
 	}
 	return nil
 }
 
-func addNoteToMap(notesPath, mapFile, filename string, tags []string) error {
-	entries, err := loadNotes(notesPath, mapFile)
+func addNoteToVault(notesPath, vaultFile, filename string, tags []string) error {
+	entries, err := loadNotes(notesPath, vaultFile)
 	if err != nil {
 		return err
 	}
@@ -134,11 +134,11 @@ func addNoteToMap(notesPath, mapFile, filename string, tags []string) error {
 		tags:     tags,
 		firstTag: getFirstTag(tags),
 	})
-	return saveNotes(notesPath, mapFile, entries)
+	return saveNotes(notesPath, vaultFile, entries)
 }
 
-func updateNoteTags(notesPath, mapFile, filename string, tags []string) error {
-	entries, err := loadNotes(notesPath, mapFile)
+func updateNoteTags(notesPath, vaultFile, filename string, tags []string) error {
+	entries, err := loadNotes(notesPath, vaultFile)
 	if err != nil {
 		return err
 	}
@@ -150,11 +150,11 @@ func updateNoteTags(notesPath, mapFile, filename string, tags []string) error {
 			break
 		}
 	}
-	return saveNotes(notesPath, mapFile, entries)
+	return saveNotes(notesPath, vaultFile, entries)
 }
 
-func removeNoteFromMap(notesPath, mapFile, filename string) error {
-	entries, err := loadNotes(notesPath, mapFile)
+func removeNoteFromVault(notesPath, vaultFile, filename string) error {
+	entries, err := loadNotes(notesPath, vaultFile)
 	if err != nil {
 		return err
 	}
@@ -165,7 +165,7 @@ func removeNoteFromMap(notesPath, mapFile, filename string) error {
 			newEntries = append(newEntries, entry)
 		}
 	}
-	return saveNotes(notesPath, mapFile, newEntries)
+	return saveNotes(notesPath, vaultFile, newEntries)
 }
 
 func collectNotesByTag(ctx context.Context) error {
@@ -174,12 +174,12 @@ func collectNotesByTag(ctx context.Context) error {
 		return fmt.Errorf("notes path not configured")
 	}
 
-	mapFile := getMapFile(ctx)
-	notesMapFile := filepath.Join(notesPath, mapFile)
+	vaultFile := getVaultFile(ctx)
+	notesVaultFile := filepath.Join(notesPath, vaultFile)
 
-	data, err := os.ReadFile(notesMapFile)
+	data, err := os.ReadFile(notesVaultFile)
 	if err != nil {
-		return fmt.Errorf("failed to read notes map: %w", err)
+		return fmt.Errorf("failed to read notes vault: %w", err)
 	}
 
 	// Group entries by their first tag
@@ -215,16 +215,16 @@ func collectNotesByTag(ctx context.Context) error {
 		return nil
 	}
 
-	// Rewrite map file with entries grouped by tag
-	file, err := os.Create(notesMapFile)
+	// Rewrite vault file with entries grouped by tag
+	file, err := os.Create(notesVaultFile)
 	if err != nil {
-		return fmt.Errorf("failed to open notes map for writing: %w", err)
+		return fmt.Errorf("failed to open notes vault for writing: %w", err)
 	}
 	defer file.Close()
 
 	for _, tag := range tagOrder {
 		if _, err := fmt.Fprintf(file, "# Tag: %s\n", tag); err != nil {
-			return fmt.Errorf("failed to write to notes map: %w", err)
+			return fmt.Errorf("failed to write to notes vault: %w", err)
 		}
 
 		for _, entry := range tagEntries[tag] {
@@ -235,12 +235,12 @@ func collectNotesByTag(ctx context.Context) error {
 				line = fmt.Sprintf("%s\n", entry.filename)
 			}
 			if _, err := file.WriteString(line); err != nil {
-				return fmt.Errorf("failed to write to notes map: %w", err)
+				return fmt.Errorf("failed to write to notes vault: %w", err)
 			}
 		}
 
 		if _, err := file.WriteString("\n"); err != nil {
-			return fmt.Errorf("failed to write to notes map: %w", err)
+			return fmt.Errorf("failed to write to notes vault: %w", err)
 		}
 	}
 
@@ -252,14 +252,14 @@ func collectNotesByTag(ctx context.Context) error {
 // Setup and Utilities
 // ============================================================================
 
-func ensureNotesStructure(notesPath, mapFile string) error {
+func ensureNotesStructure(notesPath, vaultFile string) error {
 	if notesPath == "" {
 		return fmt.Errorf("notes path is empty")
 	}
 
 	notesDir := filepath.Join(notesPath, "notes")
 	imagesDir := filepath.Join(notesPath, "images")
-	notesMapFile := filepath.Join(notesPath, mapFile)
+	notesVaultFile := filepath.Join(notesPath, vaultFile)
 
 	if err := os.MkdirAll(notesDir, 0755); err != nil {
 		return fmt.Errorf("failed to create notes directory: %w", err)
@@ -267,9 +267,9 @@ func ensureNotesStructure(notesPath, mapFile string) error {
 	if err := os.MkdirAll(imagesDir, 0755); err != nil {
 		return fmt.Errorf("failed to create images directory: %w", err)
 	}
-	if _, err := os.Stat(notesMapFile); os.IsNotExist(err) {
-		if err := os.WriteFile(notesMapFile, []byte{}, 0644); err != nil {
-			return fmt.Errorf("failed to create map file: %w", err)
+	if _, err := os.Stat(notesVaultFile); os.IsNotExist(err) {
+		if err := os.WriteFile(notesVaultFile, []byte{}, 0644); err != nil {
+			return fmt.Errorf("failed to create vault file: %w", err)
 		}
 	}
 	return nil
@@ -356,7 +356,7 @@ func createNotesInteractive(ctx context.Context) error {
 	}
 
 	notesDir := filepath.Join(notesPath, "notes")
-	mapFile := getMapFile(ctx)
+	vaultFile := getVaultFile(ctx)
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
@@ -427,8 +427,8 @@ func createNotesInteractive(ctx context.Context) error {
 			fmt.Printf("Failed to read tags: %v\n", err)
 		}
 
-		if err := addNoteToMap(notesPath, mapFile, filename, tags); err != nil {
-			fmt.Printf("Failed to add note to map: %v\n", err)
+		if err := addNoteToVault(notesPath, vaultFile, filename, tags); err != nil {
+			fmt.Printf("Failed to add note to vault: %v\n", err)
 		}
 		fmt.Println()
 	}
@@ -489,32 +489,32 @@ func addImages(ctx context.Context) error {
 	return nil
 }
 
-// moveNoteToMap moves a note entry from the current map file to another map file
-func moveNoteToMap(ctx context.Context, reader *bufio.Reader, filename string) error {
+// moveNoteToVault moves a note entry from the current vault file to another vault file
+func moveNoteToVault(ctx context.Context, reader *bufio.Reader, filename string) error {
 	notesPath := getNotesPath(ctx)
 	if notesPath == "" {
 		return fmt.Errorf("notes path not configured")
 	}
 
-	currentMapFile := getMapFile(ctx)
+	currentVaultFile := getVaultFile(ctx)
 
-	// List available map files
-	mapFiles, err := config.ListMapFiles(notesPath)
+	// List available vault files
+	vaultFiles, err := config.ListVaultFiles(notesPath)
 	if err != nil {
 		return err
 	}
 
-	fmt.Println("\nAvailable map files:")
-	for i, mf := range mapFiles {
+	fmt.Println("\nAvailable vault files:")
+	for i, vf := range vaultFiles {
 		current := ""
-		if mf == currentMapFile {
+		if vf == currentVaultFile {
 			current = " (current)"
 		}
-		fmt.Printf("  %d. %s%s\n", i+1, mf, current)
+		fmt.Printf("  %d. %s%s\n", i+1, vf, current)
 	}
 	fmt.Println()
 
-	fmt.Print("Enter map file number to move note to (or Enter to cancel): ")
+	fmt.Print("Enter vault file number to move note to (or Enter to cancel): ")
 	input, err := reader.ReadString('\n')
 	if err != nil {
 		return fmt.Errorf("failed to read input: %w", err)
@@ -527,19 +527,19 @@ func moveNoteToMap(ctx context.Context, reader *bufio.Reader, filename string) e
 	}
 
 	var idx int
-	if _, err := fmt.Sscanf(input, "%d", &idx); err != nil || idx < 1 || idx > len(mapFiles) {
+	if _, err := fmt.Sscanf(input, "%d", &idx); err != nil || idx < 1 || idx > len(vaultFiles) {
 		fmt.Println("Invalid option.")
 		return nil
 	}
 
-	targetMapFile := mapFiles[idx-1]
-	if targetMapFile == currentMapFile {
-		fmt.Println("Note is already in this map file.")
+	targetVaultFile := vaultFiles[idx-1]
+	if targetVaultFile == currentVaultFile {
+		fmt.Println("Note is already in this vault file.")
 		return nil
 	}
 
 	// Load current entries and find the note
-	entries, err := loadNotes(notesPath, currentMapFile)
+	entries, err := loadNotes(notesPath, currentVaultFile)
 	if err != nil {
 		return err
 	}
@@ -559,23 +559,23 @@ func moveNoteToMap(ctx context.Context, reader *bufio.Reader, filename string) e
 		return nil
 	}
 
-	// Remove from current map file
+	// Remove from current vault file
 	newEntries := append(entries[:entryIdx], entries[entryIdx+1:]...)
-	if err := saveNotes(notesPath, currentMapFile, newEntries); err != nil {
+	if err := saveNotes(notesPath, currentVaultFile, newEntries); err != nil {
 		return err
 	}
 
-	// Add to target map file
-	targetEntries, err := loadNotes(notesPath, targetMapFile)
+	// Add to target vault file
+	targetEntries, err := loadNotes(notesPath, targetVaultFile)
 	if err != nil {
 		return err
 	}
 	targetEntries = append(targetEntries, *noteEntry)
-	if err := saveNotes(notesPath, targetMapFile, targetEntries); err != nil {
+	if err := saveNotes(notesPath, targetVaultFile, targetEntries); err != nil {
 		return err
 	}
 
-	fmt.Printf("Moved '%s' from '%s' to '%s'.\n", filename, currentMapFile, targetMapFile)
+	fmt.Printf("Moved '%s' from '%s' to '%s'.\n", filename, currentVaultFile, targetVaultFile)
 	return nil
 }
 
@@ -587,10 +587,10 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 	}
 
 	notesDir := filepath.Join(notesPath, "notes")
-	mapFile := getMapFile(ctx)
+	vaultFile := getVaultFile(ctx)
 	reader := bufio.NewReader(os.Stdin)
 
-	entries, err := loadNotes(notesPath, mapFile)
+	entries, err := loadNotes(notesPath, vaultFile)
 	if err != nil {
 		return err
 	}
@@ -708,7 +708,7 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 						}
 					}
 				}
-				if err := updateNoteTags(notesPath, mapFile, entry.filename, newTags); err != nil {
+				if err := updateNoteTags(notesPath, vaultFile, entry.filename, newTags); err != nil {
 					fmt.Printf("Failed to update tags: %v\n", err)
 				} else {
 					fmt.Println("Tags updated.")
@@ -716,7 +716,7 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 						fmt.Printf("Error organizing notes by tag: %v\n", err)
 					}
 					// Reload entries to reflect changes
-					if entries, err = loadNotes(notesPath, mapFile); err != nil {
+					if entries, err = loadNotes(notesPath, vaultFile); err != nil {
 						fmt.Printf("Failed to reload notes: %v\n", err)
 						return err
 					}
@@ -733,15 +733,15 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 					fmt.Printf("Failed to delete file: %v\n", err)
 				} else {
 					fmt.Printf("Deleted file: %s\n", filePath)
-					if err := removeNoteFromMap(notesPath, mapFile, entry.filename); err != nil {
-						fmt.Printf("Failed to remove from map: %v\n", err)
+					if err := removeNoteFromVault(notesPath, vaultFile, entry.filename); err != nil {
+						fmt.Printf("Failed to remove from vault: %v\n", err)
 					} else {
-						fmt.Println("Removed from map.")
+						fmt.Println("Removed from vault.")
 						if err := collectNotesByTag(ctx); err != nil {
 							fmt.Printf("Error organizing notes by tag: %v\n", err)
 						}
 						// Reload entries
-						if entries, err = loadNotes(notesPath, mapFile); err != nil {
+						if entries, err = loadNotes(notesPath, vaultFile); err != nil {
 							fmt.Printf("Failed to reload notes: %v\n", err)
 							return err
 						}
@@ -754,14 +754,14 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 				}
 			}
 		case "m", "move":
-			if err := moveNoteToMap(ctx, reader, entry.filename); err != nil {
+			if err := moveNoteToVault(ctx, reader, entry.filename); err != nil {
 				fmt.Printf("Failed to move note: %v\n", err)
 			} else {
 				if err := collectNotesByTag(ctx); err != nil {
 					fmt.Printf("Error organizing notes by tag: %v\n", err)
 				}
 				// Reload entries
-				if entries, err = loadNotes(notesPath, mapFile); err != nil {
+				if entries, err = loadNotes(notesPath, vaultFile); err != nil {
 					fmt.Printf("Failed to reload notes: %v\n", err)
 					return err
 				}
@@ -830,35 +830,35 @@ func filterEntries(entries []noteEntry, filterTag string, untaggedOnly bool) []n
 	return filtered
 }
 
-func manageMapFiles(ctx context.Context, reader *bufio.Reader) (string, error) {
+func manageVaultFiles(ctx context.Context, reader *bufio.Reader) (string, error) {
 	notesPath := getNotesPath(ctx)
 	if notesPath == "" {
 		return "", fmt.Errorf("notes path not configured")
 	}
 
 	for {
-		mapFiles, err := config.ListMapFiles(notesPath)
+		vaultFiles, err := config.ListVaultFiles(notesPath)
 		if err != nil {
 			return "", err
 		}
 
-		currentMapFile := getMapFile(ctx)
+		currentVaultFile := getVaultFile(ctx)
 
-		fmt.Println("\nMap Files:")
-		fmt.Printf("Current: \033[1m%s\033[0m\n", currentMapFile)
-		if len(mapFiles) == 0 {
-			fmt.Println("  No map files found.")
+		fmt.Println("\nVault Files:")
+		fmt.Printf("Current: \033[1m%s\033[0m\n", currentVaultFile)
+		if len(vaultFiles) == 0 {
+			fmt.Println("  No vault files found.")
 		} else {
-			for i, mf := range mapFiles {
+			for i, vf := range vaultFiles {
 				current := ""
-				if mf == currentMapFile {
+				if vf == currentVaultFile {
 					current = " (current)"
 				}
-				fmt.Printf("  %d. %s%s\n", i+1, mf, current)
+				fmt.Printf("  %d. %s%s\n", i+1, vf, current)
 			}
 		}
 		fmt.Println()
-		fmt.Println("  (N)ew map file")
+		fmt.Println("  (N)ew vault file")
 		fmt.Println("  (Q)uit")
 		fmt.Println()
 
@@ -870,50 +870,50 @@ func manageMapFiles(ctx context.Context, reader *bufio.Reader) (string, error) {
 
 		switch strings.ToLower(strings.TrimSpace(input)) {
 		case "q":
-			return currentMapFile, nil
+			return currentVaultFile, nil
 		case "n":
-			fmt.Print("Enter new map file name: ")
+			fmt.Print("Enter new vault file name: ")
 			newName, err := reader.ReadString('\n')
 			if err != nil {
 				return "", fmt.Errorf("failed to read input: %w", err)
 			}
 			newName = strings.TrimSpace(newName)
 			if newName == "" {
-				fmt.Println("Map file name cannot be empty.")
+				fmt.Println("Vault file name cannot be empty.")
 				continue
 			}
-			if !strings.HasSuffix(newName, ".map") {
-				newName += ".map"
+			if !strings.HasSuffix(newName, ".vault") {
+				newName += ".vault"
 			}
 
-			mapFilePath := filepath.Join(notesPath, newName)
-			if _, err := os.Stat(mapFilePath); os.IsNotExist(err) {
-				if err := os.WriteFile(mapFilePath, []byte{}, 0644); err != nil {
-					fmt.Printf("Failed to create map file: %v\n", err)
+			vaultFilePath := filepath.Join(notesPath, newName)
+			if _, err := os.Stat(vaultFilePath); os.IsNotExist(err) {
+				if err := os.WriteFile(vaultFilePath, []byte{}, 0644); err != nil {
+					fmt.Printf("Failed to create vault file: %v\n", err)
 					continue
 				}
 			}
 
-			if err := config.SetMapFile(newName); err != nil {
-				fmt.Printf("Failed to set map file: %v\n", err)
+			if err := config.SetVaultFile(newName); err != nil {
+				fmt.Printf("Failed to set vault file: %v\n", err)
 				continue
 			}
-			fmt.Printf("Created and switched to map file: %s\n", newName)
+			fmt.Printf("Created and switched to vault file: %s\n", newName)
 			return newName, nil
 		default:
 			var idx int
-			if _, err := fmt.Sscanf(input, "%d", &idx); err != nil || idx < 1 || idx > len(mapFiles) {
+			if _, err := fmt.Sscanf(input, "%d", &idx); err != nil || idx < 1 || idx > len(vaultFiles) {
 				fmt.Println("Invalid option.")
 				continue
 			}
 
-			selectedMapFile := mapFiles[idx-1]
-			if err := config.SetMapFile(selectedMapFile); err != nil {
-				fmt.Printf("Failed to set map file: %v\n", err)
+			selectedVaultFile := vaultFiles[idx-1]
+			if err := config.SetVaultFile(selectedVaultFile); err != nil {
+				fmt.Printf("Failed to set vault file: %v\n", err)
 				continue
 			}
-			fmt.Printf("Switched to map file: %s\n", selectedMapFile)
-			return selectedMapFile, nil
+			fmt.Printf("Switched to vault file: %s\n", selectedVaultFile)
+			return selectedVaultFile, nil
 		}
 	}
 }
@@ -929,12 +929,12 @@ func buildNotesFile(ctx context.Context, filterTag string, includeFilenames bool
 	}
 
 	notesDir := filepath.Join(notesPath, "notes")
-	mapFile := getMapFile(ctx)
-	notesMapFile := filepath.Join(notesPath, mapFile)
+	vaultFile := getVaultFile(ctx)
+	notesVaultFile := filepath.Join(notesPath, vaultFile)
 
-	data, err := os.ReadFile(notesMapFile)
+	data, err := os.ReadFile(notesVaultFile)
 	if err != nil {
-		return "", nil, fmt.Errorf("failed to read notes map: %w", err)
+		return "", nil, fmt.Errorf("failed to read notes vault: %w", err)
 	}
 
 	var entries []noteEntry
@@ -1048,8 +1048,8 @@ func exportNotes(ctx context.Context, filterTag string) error {
 	}
 
 	notesPath := getNotesPath(ctx)
-	mapFile := getMapFile(ctx)
-	notesMapFile := filepath.Join(notesPath, mapFile)
+	vaultFile := getVaultFile(ctx)
+	notesVaultFile := filepath.Join(notesPath, vaultFile)
 
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Print("Enter output PDF path: ")
@@ -1062,14 +1062,14 @@ func exportNotes(ctx context.Context, filterTag string) error {
 		return fmt.Errorf("output path cannot be empty")
 	}
 
-	// Generate PDF in same folder as map file so relative image paths work
+	// Generate PDF in same folder as vault file so relative image paths work
 	if _, err := exec.LookPath("pandoc"); err != nil {
 		return fmt.Errorf("pandoc is not installed: %w", err)
 	}
 
-	tempPDF := filepath.Join(filepath.Dir(notesMapFile), filepath.Base(tmpPath)+".pdf")
+	tempPDF := filepath.Join(filepath.Dir(notesVaultFile), filepath.Base(tmpPath)+".pdf")
 	cmd := exec.Command("pandoc", tmpPath, "--pdf-engine=typst", "-o", tempPDF)
-	cmd.Dir = filepath.Dir(notesMapFile)
+	cmd.Dir = filepath.Dir(notesVaultFile)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -1106,13 +1106,13 @@ func mainMenu(ctx context.Context) error {
 
 	for {
 		fmt.Printf("notetree version %s\n", appVersion)
-		fmt.Printf("Current map file: \033[1m%s\033[0m\n", getMapFile(ctx))
+		fmt.Printf("Current vault file: \033[1m%s\033[0m\n", getVaultFile(ctx))
 		fmt.Println("  (A)dd notes")
 		fmt.Println("  (B)rowse notes")
 		fmt.Println("  (R)ead notes")
 		fmt.Println("  (E)xport note PDF")
 		fmt.Println("  (I)mage copy")
-		fmt.Println("  (M)ap files")
+		fmt.Println("  (M)anage vault files")
 		fmt.Println("  (Q)uit")
 		fmt.Println()
 
@@ -1177,10 +1177,10 @@ func mainMenu(ctx context.Context) error {
 				fmt.Printf("Error adding images: %v\n", err)
 			}
 		case "m":
-			if newMapFile, err := manageMapFiles(ctx, reader); err != nil {
-				fmt.Printf("Error managing map files: %v\n", err)
+			if newVaultFile, err := manageVaultFiles(ctx, reader); err != nil {
+				fmt.Printf("Error managing vault files: %v\n", err)
 			} else {
-				ctx = context.WithValue(ctx, mapFileKey, newMapFile)
+				ctx = context.WithValue(ctx, vaultFileKey, newVaultFile)
 			}
 		case "q":
 			fmt.Println("Goodbye!")
@@ -1269,6 +1269,22 @@ func main() {
 				},
 				Action: func(ctx context.Context, c *cli.Command) error {
 					return readNotes(ctx, c.Args().First(), c.Bool("filenames"))
+				},
+			},
+			{
+				Name:        "vault",
+				Aliases:     []string{"v"},
+				Usage:       "Manage vault files",
+				Description: "Create, switch between, or list vault files.",
+				Action: func(ctx context.Context, c *cli.Command) error {
+					reader := bufio.NewReader(os.Stdin)
+					newVaultFile, err := manageVaultFiles(ctx, reader)
+					if err != nil {
+						fmt.Printf("Error managing vault files: %v\n", err)
+					} else {
+						fmt.Printf("Current vault file: %s\n", newVaultFile)
+					}
+					return nil
 				},
 			},
 		},

@@ -12,14 +12,14 @@ const (
 	configFileName    = "notetree.conf"
 	notesPathKey      = "notes_path"
 	markdownReaderKey = "markdown_reader"
-	mapFileKey        = "map_file"
+	vaultFileKey      = "vault_file"
 )
 
 // Config holds the application configuration
 type Config struct {
 	NotesPath      string
 	MarkdownReader string
-	MapFile        string
+	VaultFile      string
 }
 
 // getConfigPath returns the path to the config file
@@ -54,7 +54,6 @@ func Load() (*Config, error) {
 	file, err := os.Open(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Config file doesn't exist, return empty config
 			return config, nil
 		}
 		return nil, fmt.Errorf("failed to open config file: %w", err)
@@ -80,8 +79,8 @@ func Load() (*Config, error) {
 			config.NotesPath = value
 		} else if key == markdownReaderKey {
 			config.MarkdownReader = value
-		} else if key == mapFileKey {
-			config.MapFile = value
+		} else if key == vaultFileKey {
+			config.VaultFile = value
 		}
 	}
 
@@ -119,8 +118,8 @@ func (c *Config) Save() error {
 		}
 	}
 
-	if c.MapFile != "" {
-		_, err = fmt.Fprintf(file, "%s=%s\n", mapFileKey, c.MapFile)
+	if c.VaultFile != "" {
+		_, err = fmt.Fprintf(file, "%s=%s\n", vaultFileKey, c.VaultFile)
 		if err != nil {
 			return fmt.Errorf("failed to write config: %w", err)
 		}
@@ -140,7 +139,6 @@ func GetNotesPath() (string, error) {
 		return config.NotesPath, nil
 	}
 
-	// Notes path not configured, prompt user
 	fmt.Println("Notes path not configured.")
 	fmt.Print("Enter the directory path where notes should be stored: ")
 
@@ -155,7 +153,6 @@ func GetNotesPath() (string, error) {
 		return "", fmt.Errorf("notes path cannot be empty")
 	}
 
-	// Expand tilde if present
 	if strings.HasPrefix(notesPath, "~") {
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
@@ -164,7 +161,6 @@ func GetNotesPath() (string, error) {
 		notesPath = filepath.Join(homeDir, notesPath[1:])
 	}
 
-	// Check if directory exists, offer to create if not
 	if _, err := os.Stat(notesPath); os.IsNotExist(err) {
 		fmt.Printf("Directory %s does not exist. Create it? (y/n): ", notesPath)
 		reader := bufio.NewReader(os.Stdin)
@@ -184,7 +180,6 @@ func GetNotesPath() (string, error) {
 		}
 	}
 
-	// Save the notes path to config
 	config.NotesPath = notesPath
 	if err := config.Save(); err != nil {
 		return "", fmt.Errorf("failed to save config: %w", err)
@@ -206,7 +201,6 @@ func GetMarkdownReader() (string, error) {
 		return config.MarkdownReader, nil
 	}
 
-	// Markdown reader not configured, prompt user
 	fmt.Println("Markdown reader not configured.")
 	fmt.Print("Enter the CLI command to open markdown files (e.g., 'glow', 'mdv', 'cat'): ")
 
@@ -221,7 +215,6 @@ func GetMarkdownReader() (string, error) {
 		return "", fmt.Errorf("markdown reader command cannot be empty")
 	}
 
-	// Save the markdown reader to config
 	config.MarkdownReader = markdownReader
 	if err := config.Save(); err != nil {
 		return "", fmt.Errorf("failed to save config: %w", err)
@@ -232,66 +225,64 @@ func GetMarkdownReader() (string, error) {
 	return markdownReader, nil
 }
 
-// GetMapFile returns the map file name, prompting the user if not configured
-func GetMapFile(notesPath string) (string, error) {
+// GetVaultFile returns the vault file name, prompting the user if not configured
+func GetVaultFile(notesPath string) (string, error) {
 	config, err := Load()
 	if err != nil {
 		return "", err
 	}
 
-	if config.MapFile != "" {
-		return config.MapFile, nil
+	if config.VaultFile != "" {
+		return config.VaultFile, nil
 	}
 
-	// Map file not configured, prompt user
-	fmt.Println("Map file not configured.")
-	fmt.Print("Enter the map file name (default: notes.map): ")
+	fmt.Println("Vault file not configured.")
+	fmt.Print("Enter the vault file name (default: notes.vault): ")
 
 	reader := bufio.NewReader(os.Stdin)
-	mapFile, err := reader.ReadString('\n')
+	vaultFile, err := reader.ReadString('\n')
 	if err != nil {
 		return "", fmt.Errorf("failed to read input: %w", err)
 	}
 
-	mapFile = strings.TrimSpace(mapFile)
-	if mapFile == "" {
-		mapFile = "notes.map"
+	vaultFile = strings.TrimSpace(vaultFile)
+	if vaultFile == "" {
+		vaultFile = "notes.vault"
 	}
 
-	// Save the map file to config
-	config.MapFile = mapFile
+	config.VaultFile = vaultFile
 	if err := config.Save(); err != nil {
 		return "", fmt.Errorf("failed to save config: %w", err)
 	}
 
-	fmt.Printf("Map file configured: %s\n", mapFile)
+	fmt.Printf("Vault file configured: %s\n", vaultFile)
 
-	return mapFile, nil
+	return vaultFile, nil
 }
 
-// ListMapFiles returns a list of existing map files in the notes directory
-func ListMapFiles(notesPath string) ([]string, error) {
-	pattern := filepath.Join(notesPath, "*.map")
+// ListVaultFiles returns a list of existing vault files in the notes directory
+func ListVaultFiles(notesPath string) ([]string, error) {
+	pattern := filepath.Join(notesPath, "*.vault")
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list map files: %w", err)
+		return nil, fmt.Errorf("failed to list vault files: %w", err)
 	}
 
-	var mapFiles []string
+	var vaultFiles []string
 	for _, match := range matches {
-		mapFiles = append(mapFiles, filepath.Base(match))
+		vaultFiles = append(vaultFiles, filepath.Base(match))
 	}
 
-	return mapFiles, nil
+	return vaultFiles, nil
 }
 
-// SetMapFile sets the map file in the config
-func SetMapFile(mapFile string) error {
+// SetVaultFile sets the vault file in the config
+func SetVaultFile(vaultFile string) error {
 	config, err := Load()
 	if err != nil {
 		return err
 	}
 
-	config.MapFile = mapFile
+	config.VaultFile = vaultFile
 	return config.Save()
 }
