@@ -687,6 +687,312 @@ func deleteNotes(ctx context.Context, reader *bufio.Reader) error {
 	return nil
 }
 
+// moveNoteToMap moves a note entry from the current map file to another map file
+func moveNoteToMap(ctx context.Context, reader *bufio.Reader, filename string) error {
+	notesPath := getNotesPath(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
+	}
+
+	currentMapFile := getMapFile(ctx)
+
+	// List available map files
+	mapFiles, err := config.ListMapFiles(notesPath)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("\nAvailable map files:")
+	for i, mf := range mapFiles {
+		current := ""
+		if mf == currentMapFile {
+			current = " (current)"
+		}
+		fmt.Printf("  %d. %s%s\n", i+1, mf, current)
+	}
+	fmt.Println()
+
+	fmt.Print("Enter map file number to move note to (or Enter to cancel): ")
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("failed to read input: %w", err)
+	}
+
+	input = strings.TrimSpace(input)
+	if input == "" {
+		fmt.Println("Cancelled.")
+		return nil
+	}
+
+	var idx int
+	if _, err := fmt.Sscanf(input, "%d", &idx); err != nil || idx < 1 || idx > len(mapFiles) {
+		fmt.Println("Invalid option.")
+		return nil
+	}
+
+	targetMapFile := mapFiles[idx-1]
+	if targetMapFile == currentMapFile {
+		fmt.Println("Note is already in this map file.")
+		return nil
+	}
+
+	// Load current entries and find the note
+	entries, err := loadNotes(notesPath, currentMapFile)
+	if err != nil {
+		return err
+	}
+
+	var noteEntry *noteEntry
+	var entryIdx int
+	for i, e := range entries {
+		if e.filename == filename {
+			noteEntry = &e
+			entryIdx = i
+			break
+		}
+	}
+
+	if noteEntry == nil {
+		fmt.Printf("Note not found: %s\n", filename)
+		return nil
+	}
+
+	// Remove from current map file
+	newEntries := append(entries[:entryIdx], entries[entryIdx+1:]...)
+	if err := saveNotes(notesPath, currentMapFile, newEntries); err != nil {
+		return err
+	}
+
+	// Add to target map file
+	targetEntries, err := loadNotes(notesPath, targetMapFile)
+	if err != nil {
+		return err
+	}
+	targetEntries = append(targetEntries, *noteEntry)
+	if err := saveNotes(notesPath, targetMapFile, targetEntries); err != nil {
+		return err
+	}
+
+	fmt.Printf("Moved '%s' from '%s' to '%s'.\n", filename, currentMapFile, targetMapFile)
+	return nil
+}
+
+// browseNotesInteractive displays notes one by one with action options
+func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly bool) error {
+	notesPath := getNotesPath(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
+	}
+
+	notesDir := filepath.Join(notesPath, "notes")
+	mapFile := getMapFile(ctx)
+	reader := bufio.NewReader(os.Stdin)
+
+	entries, err := loadNotes(notesPath, mapFile)
+	if err != nil {
+		return err
+	}
+
+	// Filter entries
+	var filteredEntries []noteEntry
+	for _, entry := range entries {
+		if untaggedOnly {
+			if len(entry.tags) == 0 || (len(entry.tags) == 1 && entry.tags[0] == "") {
+				filteredEntries = append(filteredEntries, entry)
+			}
+		} else if filterTag == "" {
+			filteredEntries = append(filteredEntries, entry)
+		} else {
+			for _, tag := range entry.tags {
+				if tag == filterTag {
+					filteredEntries = append(filteredEntries, entry)
+					break
+				}
+			}
+		}
+	}
+
+	if len(filteredEntries) == 0 {
+		if untaggedOnly {
+			fmt.Println("No untagged notes found.")
+		} else if filterTag != "" {
+			fmt.Printf("No notes found with tag: %s\n", filterTag)
+		} else {
+			fmt.Println("No notes found.")
+		}
+		return nil
+	}
+
+	fmt.Printf("\nBrowsing %d note(s)", len(filteredEntries))
+	if untaggedOnly {
+		fmt.Println(" (untagged)")
+	} else if filterTag != "" {
+		fmt.Printf(" (tag: %s)\n", filterTag)
+	} else {
+		fmt.Println()
+	}
+	fmt.Println()
+
+	for i, entry := range filteredEntries {
+		fmt.Printf("\n\033[1m[%d/%d] %s\033[0m\n", i+1, len(filteredEntries), entry.filename)
+		if len(entry.tags) > 0 {
+			fmt.Printf("Tags: \033[36m%s\033[0m\n", strings.Join(entry.tags, ", "))
+		} else {
+			fmt.Println("Tags: \033[33m(none)\033[0m")
+		}
+		fmt.Println(strings.Repeat("-", 50))
+
+		// Read and display note content
+		filePath := filepath.Join(notesDir, entry.filename)
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			fmt.Printf("Error reading file: %v\n", err)
+			continue
+		}
+
+		// Display content (truncate if too long)
+		contentStr := string(content)
+		if len(contentStr) > 2000 {
+			fmt.Println(contentStr[:2000])
+			fmt.Println("\n... (content truncated, use 'v' to view full content)")
+		} else {
+			fmt.Println(contentStr)
+		}
+		fmt.Println()
+
+		// Show action menu
+		fmt.Println("Actions:")
+		fmt.Println("  (e)dit note")
+		fmt.Println("  (t)ags update")
+		fmt.Println("  (d)elete note")
+		fmt.Println("  (m)ove to another map file")
+		fmt.Println("  (v)iew full content in markdown reader")
+		fmt.Println("  (n)ext / (p)revious / (q)uit")
+		fmt.Println()
+
+		fmt.Print("Select action: ")
+		action, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("failed to read action: %w", err)
+		}
+		action = strings.ToLower(strings.TrimSpace(action))
+
+		switch action {
+		case "e", "edit":
+			if err := openEditor(filePath); err != nil {
+				fmt.Printf("Failed to open editor: %v\n", err)
+			} else {
+				fmt.Println("Note edited.")
+			}
+		case "t", "tags":
+			fmt.Printf("Current tags: %s\n", strings.Join(entry.tags, ", "))
+			fmt.Print("Enter new tags (comma-separated, or Enter to keep current): ")
+			tagsInput, err := reader.ReadString('\n')
+			if err != nil {
+				fmt.Printf("Failed to read tags: %v\n", err)
+			} else {
+				tagsInput = strings.TrimSpace(tagsInput)
+				var newTags []string
+				if tagsInput == "" {
+					newTags = entry.tags
+				} else {
+					for _, tag := range strings.Split(tagsInput, ",") {
+						tag = strings.TrimSpace(tag)
+						if tag != "" {
+							newTags = append(newTags, tag)
+											}
+					}
+				}
+				if err := updateNoteTags(notesPath, mapFile, entry.filename, newTags); err != nil {
+					fmt.Printf("Failed to update tags: %v\n", err)
+				} else {
+					fmt.Println("Tags updated.")
+					// Reload entries to reflect changes
+					entries, _ = loadNotes(notesPath, mapFile)
+					filteredEntries, _ = filterEntries(entries, filterTag, untaggedOnly)
+				}
+			}
+		case "d", "delete":
+			fmt.Printf("Are you sure you want to delete '%s'? (y/n): ", entry.filename)
+			confirm, err := reader.ReadString('\n')
+			if err != nil {
+				fmt.Printf("Failed to read confirmation: %v\n", err)
+			} else if strings.ToLower(strings.TrimSpace(confirm)) == "y" {
+				if err := os.Remove(filePath); err != nil {
+					fmt.Printf("Failed to delete file: %v\n", err)
+				} else {
+					fmt.Printf("Deleted file: %s\n", filePath)
+					if err := removeNoteFromMap(notesPath, mapFile, entry.filename); err != nil {
+						fmt.Printf("Failed to remove from map: %v\n", err)
+					} else {
+						fmt.Println("Removed from map.")
+						// Reload entries
+						entries, _ = loadNotes(notesPath, mapFile)
+						filteredEntries, _ = filterEntries(entries, filterTag, untaggedOnly)
+						i-- // Adjust index since we removed an entry
+					}
+				}
+			}
+		case "m", "move":
+			if err := moveNoteToMap(ctx, reader, entry.filename); err != nil {
+				fmt.Printf("Failed to move note: %v\n", err)
+			} else {
+				// Reload entries
+				entries, _ = loadNotes(notesPath, mapFile)
+				filteredEntries, _ = filterEntries(entries, filterTag, untaggedOnly)
+				i-- // Adjust index since current entry was moved
+			}
+		case "v", "view":
+			markdownReader, err := config.GetMarkdownReader()
+			if err != nil {
+				fmt.Printf("Failed to get markdown reader: %v\n", err)
+			} else {
+				cmd := exec.Command(markdownReader, filePath)
+				cmd.Stdin = os.Stdin
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+				if err := cmd.Run(); err != nil {
+					fmt.Printf("Failed to open markdown reader: %v\n", err)
+				}
+			}
+		case "p", "prev", "previous":
+			if i > 0 {
+				i-- // Will be incremented by loop
+			} else {
+				fmt.Println("Already at first note.")
+			}
+		case "q", "quit", "exit":
+			fmt.Println("Exiting browse mode.")
+			return nil
+		}
+	}
+
+	fmt.Println("\nEnd of notes.")
+	return nil
+}
+
+// filterEntries filters entries by tag or untagged status
+func filterEntries(entries []noteEntry, filterTag string, untaggedOnly bool) ([]noteEntry, error) {
+	var filtered []noteEntry
+	for _, entry := range entries {
+		if untaggedOnly {
+			if len(entry.tags) == 0 {
+				filtered = append(filtered, entry)
+			}
+		} else if filterTag == "" {
+			filtered = append(filtered, entry)
+		} else {
+			for _, tag := range entry.tags {
+				if tag == filterTag {
+					filtered = append(filtered, entry)
+					break
+				}
+			}
+		}
+	}
+	return filtered, nil
+}
+
 func manageMapFiles(ctx context.Context, reader *bufio.Reader) (string, error) {
 	notesPath := getNotesPath(ctx)
 	if notesPath == "" {
@@ -965,6 +1271,7 @@ func mainMenu(ctx context.Context) error {
 		fmt.Printf("notetree version %s\n", appVersion)
 		fmt.Printf("Current map file: \033[1m%s\033[0m\n", getMapFile(ctx))
 		fmt.Println("  (A)dd notes")
+		fmt.Println("  (B)rowse notes")
 		fmt.Println("  (R)ead notes")
 		fmt.Println("  (X)port note PDF")
 		fmt.Println("  (E)dit notes")
@@ -986,6 +1293,24 @@ func mainMenu(ctx context.Context) error {
 				fmt.Printf("Error in add mode: %v\n", err)
 			} else if err := collectNotesByTag(ctx); err != nil {
 				fmt.Printf("Error organizing notes by tag: %v\n", err)
+			}
+		case "b":
+			fmt.Print("Enter tag to filter (or Enter for all, 'u' for untagged only): ")
+			tagInput, err := reader.ReadString('\n')
+			if err != nil {
+				fmt.Printf("Error reading tag: %v\n", err)
+			} else {
+				tagInput = strings.TrimSpace(tagInput)
+				filterTag := ""
+				untaggedOnly := false
+				if tagInput == "u" || tagInput == "U" {
+					untaggedOnly = true
+				} else if tagInput != "" {
+					filterTag = tagInput
+				}
+				if err := browseNotesInteractive(ctx, filterTag, untaggedOnly); err != nil {
+					fmt.Printf("Error browsing notes: %v\n", err)
+				}
 			}
 		case "r":
 			fmt.Print("Enter tag to filter (or Enter to read all): ")
@@ -1070,6 +1395,21 @@ func main() {
 				},
 				After: func(ctx context.Context, cmd *cli.Command) error {
 					return collectNotesByTag(ctx)
+				},
+			},
+			{
+				Name:        "browse",
+				Aliases:     []string{"b"},
+				Usage:       "Browse notes interactively",
+				ArgsUsage:   "[tag]",
+				Description: "Browse notes one by one with options to edit, delete, update tags, move to another map file, or view in markdown reader.\nUse 'u' or 'untagged' as the tag to browse untagged notes only.",
+				Action: func(ctx context.Context, c *cli.Command) error {
+					filterTag := c.Args().First()
+					untaggedOnly := filterTag == "u" || filterTag == "untagged"
+					if untaggedOnly {
+						filterTag = ""
+					}
+					return browseNotesInteractive(ctx, filterTag, untaggedOnly)
 				},
 			},
 			{
