@@ -69,7 +69,7 @@ func getFirstTag(tags []string) string {
 
 func parseNoteLine(line string) noteEntry {
 	line = strings.TrimSpace(line)
-	if line == "" {
+	if line == "" || strings.HasPrefix(line, "#") {
 		return noteEntry{}
 	}
 
@@ -224,8 +224,8 @@ func ensureNotesStructure(notesPath string, mapFile string) error {
 	if _, err := os.Stat(notesMapFile); os.IsNotExist(err) {
 		if err := os.WriteFile(notesMapFile, []byte{}, 0644); err != nil {
 			return fmt.Errorf("failed to create map file: %w", err)
-		}
 	}
+}
 	return nil
 }
 
@@ -717,6 +717,8 @@ func mainMenu(ctx context.Context) error {
 		case "a":
 			if err := createNotesInteractive(ctx); err != nil {
 				fmt.Printf("Error in add mode: %v\n", err)
+			} else if err := collectNotesByTag(ctx); err != nil {
+				fmt.Printf("Error organizing notes by tag: %v\n", err)
 			}
 		case "r":
 			fmt.Print("Enter tag to filter (or Enter to read all): ")
@@ -746,6 +748,8 @@ func mainMenu(ctx context.Context) error {
 		case "e":
 			if err := editNotesInteractive(ctx); err != nil {
 				fmt.Printf("Error in edit mode: %v\n", err)
+			} else if err := collectNotesByTag(ctx); err != nil {
+				fmt.Printf("Error organizing notes by tag: %v\n", err)
 			}
 		case "i":
 			if err := addImages(ctx); err != nil {
@@ -928,6 +932,82 @@ func deleteNotes(ctx context.Context, reader *bufio.Reader) error {
 	return nil
 }
 
+func collectNotesByTag(ctx context.Context) error {
+	notesPath := GetNotesPath(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
+	}
+
+	mapFile := GetMapFile(ctx)
+	notesMapFile := filepath.Join(notesPath, mapFile)
+
+	data, err := os.ReadFile(notesMapFile)
+	if err != nil {
+		return fmt.Errorf("failed to read notes.map: %w", err)
+	}
+
+	// Group entries by their first tag
+	tagEntries := make(map[string][]noteEntry)
+	var tagOrder []string
+	seenTags := make(map[string]bool)
+
+	for _, line := range strings.Split(string(data), "\n") {
+		if line = strings.TrimSpace(line); line == "" {
+			continue
+		}
+		entry := parseNoteLine(line)
+		if entry.filename == "" {
+			continue
+		}
+
+		tag := entry.firstTag
+		if tag == "" {
+			tag = "_untagged"
+		}
+
+		if !seenTags[tag] {
+			seenTags[tag] = true
+			tagOrder = append(tagOrder, tag)
+		}
+		tagEntries[tag] = append(tagEntries[tag], entry)
+	}
+
+	// Rewrite map file with entries grouped by tag
+	file, err := os.Create(notesMapFile)
+	if err != nil {
+		return fmt.Errorf("failed to open notes.map for writing: %w", err)
+	}
+	defer file.Close()
+
+	for _, tag := range tagOrder {
+		// Write tag header comment
+		if _, err := fmt.Fprintf(file, "# Tag: %s\n", tag); err != nil {
+			return fmt.Errorf("failed to write to notes.map: %w", err)
+		}
+
+		for _, entry := range tagEntries[tag] {
+			var line string
+			if len(entry.tags) > 0 {
+				line = fmt.Sprintf("%s [%s]\n", entry.filename, strings.Join(entry.tags, ","))
+			} else {
+				line = fmt.Sprintf("%s\n", entry.filename)
+			}
+			if _, err := file.WriteString(line); err != nil {
+				return fmt.Errorf("failed to write to notes.map: %w", err)
+			}
+		}
+
+		// Add blank line between tag groups
+		if _, err := file.WriteString("\n"); err != nil {
+			return fmt.Errorf("failed to write to notes.map: %w", err)
+		}
+	}
+
+	fmt.Println("Notes organized by tag successfully.")
+	return nil
+}
+
+
 func main() {
 	log.SetFlags(log.Flags() &^ (log.Ldate | log.Ltime))
 
@@ -950,12 +1030,18 @@ func main() {
 				Action: func(ctx context.Context, c *cli.Command) error {
 					return createNotesInteractive(ctx)
 				},
+				After: func(ctx context.Context, cmd *cli.Command) error {
+					return collectNotesByTag(ctx)
+				},
 			},
 			{
 				Name:    "edit",
 				Usage:   "Edit an existing note",
 				Action: func(ctx context.Context, c *cli.Command) error {
 					return editNotesInteractive(ctx)
+				},
+				After: func(ctx context.Context, cmd *cli.Command) error {
+					return collectNotesByTag(ctx)
 				},
 			},
 			{
