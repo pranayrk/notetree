@@ -747,8 +747,12 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 						}
 						filteredEntries = filterEntries(entries, filterTag, untaggedOnly)
 						// Don't increment i, stay at same position
+						if len(filteredEntries) == 0 {
+							fmt.Println("\nNo more notes to browse.")
+							return nil
+						}
 						if i >= len(filteredEntries) {
-							i-- // If we deleted the last entry, move back
+							i = len(filteredEntries) - 1 // Move to last available entry
 						}
 					}
 				}
@@ -767,8 +771,12 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 				}
 				filteredEntries = filterEntries(entries, filterTag, untaggedOnly)
 				// Don't increment i, stay at same position
+				if len(filteredEntries) == 0 {
+					fmt.Println("\nNo more notes to browse.")
+					return nil
+				}
 				if i >= len(filteredEntries) {
-					i-- // If we moved the last entry, move back
+					i = len(filteredEntries) - 1 // Move to last available entry
 				}
 			}
 		case "v", "view":
