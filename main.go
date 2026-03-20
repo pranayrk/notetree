@@ -460,6 +460,11 @@ func createNotesInteractive(ctx context.Context) error {
 
 		filePath := filepath.Join(notesDir, filename)
 
+		if _, err := os.Stat(filePath); err == nil {
+			fmt.Printf("File already exists: %s. Please choose a different name.\n", filename)
+			continue
+		}
+
 		if err := os.WriteFile(filePath, []byte{}, 0644); err != nil {
 			fmt.Printf("Failed to create note file: %v\n", err)
 			continue
