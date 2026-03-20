@@ -168,6 +168,73 @@ func removeNoteFromVault(notesPath, vaultFile, filename string) error {
 	return saveNotes(notesPath, vaultFile, newEntries)
 }
 
+// renameNoteFile renames a note file and updates the vault file
+func renameNoteFile(ctx context.Context, reader *bufio.Reader, oldFilename string) error {
+	notesPath := getNotesPath(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
+	}
+
+	notesDir := filepath.Join(notesPath, "notes")
+	vaultFile := getVaultFile(ctx)
+
+	fmt.Print("Enter new filename (or Enter to cancel): ")
+	newFilename, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("failed to read input: %w", err)
+	}
+
+	newFilename = strings.TrimSpace(newFilename)
+	if newFilename == "" {
+		fmt.Println("Cancelled.")
+		return nil
+	}
+
+	if newFilename == oldFilename {
+		fmt.Println("Filename unchanged.")
+		return nil
+	}
+
+	if !strings.HasSuffix(newFilename, ".md") {
+		newFilename += ".md"
+	}
+
+	oldFilePath := filepath.Join(notesDir, oldFilename)
+	newFilePath := filepath.Join(notesDir, newFilename)
+
+	if _, err := os.Stat(newFilePath); err == nil {
+		fmt.Printf("File already exists: %s\n", newFilename)
+		return nil
+	}
+
+	if err := os.Rename(oldFilePath, newFilePath); err != nil {
+		return fmt.Errorf("failed to rename file: %w", err)
+	}
+
+	entries, err := loadNotes(notesPath, vaultFile)
+	if err != nil {
+		return err
+	}
+
+	for i := range entries {
+		if entries[i].filename == oldFilename {
+			entries[i].filename = newFilename
+		}
+	}
+
+	if err := saveNotes(notesPath, vaultFile, entries); err != nil {
+		return err
+	}
+
+	fmt.Printf("Renamed '%s' to '%s'.\n", oldFilename, newFilename)
+
+	if err := collectNotesByTag(ctx); err != nil {
+		return fmt.Errorf("error organizing notes by tag: %w", err)
+	}
+
+	return nil
+}
+
 func collectNotesByTag(ctx context.Context) error {
 	notesPath := getNotesPath(ctx)
 	if notesPath == "" {
@@ -668,6 +735,7 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 		// Show action menu
 		fmt.Println("Actions:")
 		fmt.Println("  (E)dit note")
+		fmt.Println("  (R)ename file")
 		fmt.Println("  (T)ags update")
 		fmt.Println("  (D)elete note")
 		fmt.Println("  (M)ove to another map file")
@@ -688,6 +756,25 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 				fmt.Printf("Failed to open editor: %v\n", err)
 			} else {
 				fmt.Println("Note edited.")
+			}
+		case "r", "rename":
+			if err := renameNoteFile(ctx, reader, entry.filename); err != nil {
+				fmt.Printf("Failed to rename file: %v\n", err)
+			} else {
+				// Reload entries
+				if entries, err = loadNotes(notesPath, vaultFile); err != nil {
+					fmt.Printf("Failed to reload notes: %v\n", err)
+					return err
+				}
+				filteredEntries = filterEntries(entries, filterTag, untaggedOnly)
+				// Don't increment i, stay at same position
+				if len(filteredEntries) == 0 {
+					fmt.Println("\nNo more notes to browse.")
+					return nil
+				}
+				if i >= len(filteredEntries) {
+					i = len(filteredEntries) - 1 // Move to last available entry
+				}
 			}
 		case "t", "tags":
 			fmt.Printf("Current tags: %s\n", strings.Join(entry.tags, ", "))
