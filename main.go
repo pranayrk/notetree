@@ -1058,6 +1058,369 @@ func manageVaultFiles(ctx context.Context, reader *bufio.Reader) (string, error)
 	}
 }
 
+// manageTags provides a menu for tag management operations
+func manageTags(ctx context.Context, reader *bufio.Reader) error {
+	notesPath := getNotesPath(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
+	}
+
+	vaultFile := getVaultFile(ctx)
+
+	for {
+		// Load all entries and collect unique tags
+		entries, err := loadNotes(notesPath, vaultFile)
+		if err != nil {
+			return err
+		}
+
+		// Collect unique tags with counts
+		tagCounts := make(map[string]int)
+		var tagOrder []string
+		seenTags := make(map[string]bool)
+
+		for _, entry := range entries {
+			for _, tag := range entry.tags {
+				if tag == "" {
+					continue
+				}
+				if !seenTags[tag] {
+					seenTags[tag] = true
+					tagOrder = append(tagOrder, tag)
+				}
+				tagCounts[tag]++
+			}
+		}
+
+		fmt.Println("\nTag Management")
+		fmt.Println("==============")
+		if len(tagOrder) == 0 {
+			fmt.Println("No tags found.")
+		} else {
+			fmt.Println("\nExisting tags:")
+			for _, tag := range tagOrder {
+				fmt.Printf("  - %s (%d notes)\n", tag, tagCounts[tag])
+			}
+		}
+		fmt.Println()
+		fmt.Println("  (M)ove notes with tag to another vault")
+		fmt.Println("  (R)ename tag")
+		fmt.Println("  (D)elete notes with tag")
+		fmt.Println("  (Q)uit")
+		fmt.Println()
+
+		fmt.Print("Select option: ")
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("failed to read input: %w", err)
+		}
+
+		switch strings.ToLower(strings.TrimSpace(input)) {
+		case "q", "quit":
+			fmt.Println("Exiting tag management.")
+			return nil
+		case "m", "move":
+			if err := moveNotesByTag(ctx, reader); err != nil {
+				fmt.Printf("Error moving notes: %v\n", err)
+			}
+		case "r", "rename":
+			if err := renameTag(ctx, reader); err != nil {
+				fmt.Printf("Error renaming tag: %v\n", err)
+			}
+		case "d", "delete":
+			if err := deleteNotesByTag(ctx, reader); err != nil {
+				fmt.Printf("Error deleting notes: %v\n", err)
+			}
+		default:
+			fmt.Println("Invalid option.")
+		}
+	}
+}
+
+// moveNotesByTag moves all notes with a specific tag to another vault file
+func moveNotesByTag(ctx context.Context, reader *bufio.Reader) error {
+	notesPath := getNotesPath(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
+	}
+
+	currentVaultFile := getVaultFile(ctx)
+
+	fmt.Print("Enter tag to move: ")
+	tagInput, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("failed to read input: %w", err)
+	}
+	tagInput = strings.TrimSpace(tagInput)
+	if tagInput == "" {
+		fmt.Println("Tag cannot be empty.")
+		return nil
+	}
+
+	// List available vault files
+	vaultFiles, err := config.ListVaultFiles(notesPath)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("\nAvailable vault files:")
+	for i, vf := range vaultFiles {
+		current := ""
+		if vf == currentVaultFile {
+			current = " (current)"
+		}
+		fmt.Printf("  %d. %s%s\n", i+1, vf, current)
+	}
+	fmt.Println()
+
+	fmt.Print("Enter vault file number to move notes to (or Enter to cancel): ")
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("failed to read input: %w", err)
+	}
+
+	input = strings.TrimSpace(input)
+	if input == "" {
+		fmt.Println("Cancelled.")
+		return nil
+	}
+
+	var idx int
+	if _, err := fmt.Sscanf(input, "%d", &idx); err != nil || idx < 1 || idx > len(vaultFiles) {
+		fmt.Println("Invalid option.")
+		return nil
+	}
+
+	targetVaultFile := vaultFiles[idx-1]
+	if targetVaultFile == currentVaultFile {
+		fmt.Println("Note is already in this vault file.")
+		return nil
+	}
+
+	// Load current entries
+	entries, err := loadNotes(notesPath, currentVaultFile)
+	if err != nil {
+		return err
+	}
+
+	// Find notes with the specified tag
+	var notesToMove []noteEntry
+	var notesToKeep []noteEntry
+	for _, entry := range entries {
+		hasTag := false
+		for _, tag := range entry.tags {
+			if tag == tagInput {
+				hasTag = true
+				break
+			}
+		}
+		if hasTag {
+			notesToMove = append(notesToMove, entry)
+		} else {
+			notesToKeep = append(notesToKeep, entry)
+		}
+	}
+
+	if len(notesToMove) == 0 {
+		fmt.Printf("No notes found with tag: %s\n", tagInput)
+		return nil
+	}
+
+	fmt.Printf("Found %d note(s) with tag '%s'.\n", len(notesToMove), tagInput)
+	fmt.Printf("Move these notes from '%s' to '%s'? (y/n): ", currentVaultFile, targetVaultFile)
+	confirm, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("failed to read confirmation: %w", err)
+	}
+
+	if strings.ToLower(strings.TrimSpace(confirm)) != "y" {
+		fmt.Println("Cancelled.")
+		return nil
+	}
+
+	// Remove from current vault
+	if err := saveNotes(notesPath, currentVaultFile, notesToKeep); err != nil {
+		return err
+	}
+
+	// Add to target vault
+	targetEntries, err := loadNotes(notesPath, targetVaultFile)
+	if err != nil {
+		return err
+	}
+	targetEntries = append(targetEntries, notesToMove...)
+	if err := saveNotes(notesPath, targetVaultFile, targetEntries); err != nil {
+		return err
+	}
+
+	fmt.Printf("Moved %d note(s) with tag '%s' from '%s' to '%s'.\n", len(notesToMove), tagInput, currentVaultFile, targetVaultFile)
+
+	if err := collectNotesByTag(ctx); err != nil {
+		fmt.Printf("Error organizing notes by tag: %v\n", err)
+	}
+
+	return nil
+}
+
+// renameTag renames a tag across all notes in the current vault
+func renameTag(ctx context.Context, reader *bufio.Reader) error {
+	notesPath := getNotesPath(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
+	}
+
+	vaultFile := getVaultFile(ctx)
+
+	fmt.Print("Enter current tag name: ")
+	oldTag, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("failed to read input: %w", err)
+	}
+	oldTag = strings.TrimSpace(oldTag)
+	if oldTag == "" {
+		fmt.Println("Tag cannot be empty.")
+		return nil
+	}
+
+	fmt.Print("Enter new tag name: ")
+	newTag, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("failed to read input: %w", err)
+	}
+	newTag = strings.TrimSpace(newTag)
+	if newTag == "" {
+		fmt.Println("New tag cannot be empty.")
+		return nil
+	}
+
+	if oldTag == newTag {
+		fmt.Println("Tags are the same.")
+		return nil
+	}
+
+	entries, err := loadNotes(notesPath, vaultFile)
+	if err != nil {
+		return err
+	}
+
+	// Count how many notes will be affected
+	affectedCount := 0
+	for i := range entries {
+		for j, tag := range entries[i].tags {
+			if tag == oldTag {
+				entries[i].tags[j] = newTag
+				affectedCount++
+			}
+		}
+		// Update firstTag if needed
+		entries[i].firstTag = getFirstTag(entries[i].tags)
+	}
+
+	if affectedCount == 0 {
+		fmt.Printf("No notes found with tag: %s\n", oldTag)
+		return nil
+	}
+
+	if err := saveNotes(notesPath, vaultFile, entries); err != nil {
+		return err
+	}
+
+	fmt.Printf("Renamed tag '%s' to '%s' in %d occurrence(s).\n", oldTag, newTag, affectedCount)
+
+	if err := collectNotesByTag(ctx); err != nil {
+		fmt.Printf("Error organizing notes by tag: %v\n", err)
+	}
+
+	return nil
+}
+
+// deleteNotesByTag deletes all notes with a specific tag
+func deleteNotesByTag(ctx context.Context, reader *bufio.Reader) error {
+	notesPath := getNotesPath(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
+	}
+
+	vaultFile := getVaultFile(ctx)
+	notesDir := filepath.Join(notesPath, "notes")
+
+	fmt.Print("Enter tag to delete notes with: ")
+	tagInput, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("failed to read input: %w", err)
+	}
+	tagInput = strings.TrimSpace(tagInput)
+	if tagInput == "" {
+		fmt.Println("Tag cannot be empty.")
+		return nil
+	}
+
+	entries, err := loadNotes(notesPath, vaultFile)
+	if err != nil {
+		return err
+	}
+
+	// Find notes with the specified tag
+	var notesToDelete []noteEntry
+	var notesToKeep []noteEntry
+	for _, entry := range entries {
+		hasTag := false
+		for _, tag := range entry.tags {
+			if tag == tagInput {
+				hasTag = true
+				break
+			}
+		}
+		if hasTag {
+			notesToDelete = append(notesToDelete, entry)
+		} else {
+			notesToKeep = append(notesToKeep, entry)
+		}
+	}
+
+	if len(notesToDelete) == 0 {
+		fmt.Printf("No notes found with tag: %s\n", tagInput)
+		return nil
+	}
+
+	fmt.Printf("Found %d note(s) with tag '%s'.\n", len(notesToDelete), tagInput)
+	fmt.Println("This will permanently delete the following files:")
+	for _, entry := range notesToDelete {
+		fmt.Printf("  - %s\n", entry.filename)
+	}
+	fmt.Println()
+	fmt.Print("Are you sure you want to delete these notes? (y/n): ")
+	confirm, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("failed to read confirmation: %w", err)
+	}
+
+	if strings.ToLower(strings.TrimSpace(confirm)) != "y" {
+		fmt.Println("Cancelled.")
+		return nil
+	}
+
+	// Delete files and save vault
+	for _, entry := range notesToDelete {
+		filePath := filepath.Join(notesDir, entry.filename)
+		if err := os.Remove(filePath); err != nil {
+			fmt.Printf("Warning: failed to delete file %s: %v\n", filePath, err)
+		}
+	}
+
+	if err := saveNotes(notesPath, vaultFile, notesToKeep); err != nil {
+		return err
+	}
+
+	fmt.Printf("Deleted %d note(s) with tag '%s'.\n", len(notesToDelete), tagInput)
+
+	if err := collectNotesByTag(ctx); err != nil {
+		fmt.Printf("Error organizing notes by tag: %v\n", err)
+	}
+
+	return nil
+}
+
 // ============================================================================
 // Read and Export Functions
 // ============================================================================
@@ -1253,6 +1616,7 @@ func mainMenu(ctx context.Context) error {
 		fmt.Println("  (E)xport note PDF")
 		fmt.Println("  (I)mage copy")
 		fmt.Println("  (M)anage vault files")
+		fmt.Println("  (T)ag management")
 		fmt.Println("  (Q)uit")
 		fmt.Println()
 
@@ -1321,6 +1685,10 @@ func mainMenu(ctx context.Context) error {
 				fmt.Printf("Error managing vault files: %v\n", err)
 			} else {
 				ctx = context.WithValue(ctx, vaultFileKey, newVaultFile)
+			}
+		case "t":
+			if err := manageTags(ctx, reader); err != nil {
+				fmt.Printf("Error managing tags: %v\n", err)
 			}
 		case "q":
 			fmt.Println("Goodbye!")
@@ -1471,6 +1839,16 @@ func main() {
 					cmd.Stdout = os.Stdout
 					cmd.Stderr = os.Stderr
 					return cmd.Run()
+				},
+			},
+			{
+				Name:        "tags",
+				Aliases:     []string{"tag"},
+				Usage:       "Manage tags",
+				Description: "Manage tags across all notes: move notes by tag, rename tags, or delete notes by tag.",
+				Action: func(ctx context.Context, c *cli.Command) error {
+					reader := bufio.NewReader(os.Stdin)
+					return manageTags(ctx, reader)
 				},
 			},
 		},
