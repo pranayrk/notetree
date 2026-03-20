@@ -351,7 +351,12 @@ func openEditor(filePath string) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	// Small delay to allow terminal to settle after editor exits
+	time.Sleep(50 * time.Millisecond)
+	return nil
 }
 
 func promptForTags(reader *bufio.Reader) ([]string, error) {
@@ -808,6 +813,19 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 						return err
 					}
 					filteredEntries = filterEntries(entries, filterTag, untaggedOnly)
+					// Find the same entry in the reloaded list
+					found := false
+					for j, e := range filteredEntries {
+						if e.filename == entry.filename {
+							i = j
+							found = true
+							break
+						}
+					}
+					if !found {
+						fmt.Println("\nNote not found in filtered list.")
+						return nil
+					}
 				}
 			}
 		case "d", "delete":
