@@ -871,12 +871,34 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 			if err != nil {
 				fmt.Printf("Failed to get markdown reader: %v\n", err)
 			} else {
-				cmd := exec.Command(markdownReader, filePath)
-				cmd.Stdin = os.Stdin
-				cmd.Stdout = os.Stdout
-				cmd.Stderr = os.Stderr
-				if err := cmd.Run(); err != nil {
-					fmt.Printf("Failed to open markdown reader: %v\n", err)
+				// Copy file to vault file directory so relative image paths work
+				vaultDir := notesPath
+				tmpFile, err := os.CreateTemp(vaultDir, "view_*.md")
+				if err != nil {
+					fmt.Printf("Failed to create temporary file: %v\n", err)
+				} else {
+					tmpPath := tmpFile.Name()
+					content, readErr := os.ReadFile(filePath)
+					if readErr != nil {
+						fmt.Printf("Failed to read note: %v\n", readErr)
+						tmpFile.Close()
+						os.Remove(tmpPath)
+					} else {
+						if _, writeErr := tmpFile.Write(content); writeErr != nil {
+							fmt.Printf("Failed to write temporary file: %v\n", writeErr)
+						}
+						tmpFile.Close()
+
+						cmd := exec.Command(markdownReader, tmpPath)
+						cmd.Stdin = os.Stdin
+						cmd.Stdout = os.Stdout
+						cmd.Stderr = os.Stderr
+						if err := cmd.Run(); err != nil {
+							fmt.Printf("Failed to open markdown reader: %v\n", err)
+						}
+
+						os.Remove(tmpPath)
+					}
 				}
 			}
 		case "n", "next":
