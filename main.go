@@ -1615,7 +1615,7 @@ func mainMenu(ctx context.Context) error {
 		fmt.Println("  (R)ead notes")
 		fmt.Println("  (E)xport note PDF")
 		fmt.Println("  (I)mage copy")
-		fmt.Println("  (M)anage vault files")
+		fmt.Println("  (V)ault management")
 		fmt.Println("  (T)ag management")
 		fmt.Println("  (Q)uit")
 		fmt.Println()
@@ -1680,7 +1680,7 @@ func mainMenu(ctx context.Context) error {
 			if err := addImages(ctx); err != nil {
 				fmt.Printf("Error adding images: %v\n", err)
 			}
-		case "m":
+		case "v":
 			if newVaultFile, err := manageVaultFiles(ctx, reader); err != nil {
 				fmt.Printf("Error managing vault files: %v\n", err)
 			} else {
