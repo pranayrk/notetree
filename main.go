@@ -999,6 +999,7 @@ func manageVaultFiles(ctx context.Context, reader *bufio.Reader) (string, error)
 		}
 		fmt.Println()
 		fmt.Println("  (N)ew vault file")
+		fmt.Println("  (O)pen vault file in editor")
 		fmt.Println("  (Q)uit")
 		fmt.Println()
 
@@ -1011,6 +1012,13 @@ func manageVaultFiles(ctx context.Context, reader *bufio.Reader) (string, error)
 		switch strings.ToLower(strings.TrimSpace(input)) {
 		case "q":
 			return currentVaultFile, nil
+		case "o":
+			vaultFilePath := filepath.Join(notesPath, currentVaultFile)
+			if err := openEditor(vaultFilePath); err != nil {
+				fmt.Printf("Failed to open editor: %v\n", err)
+			} else {
+				fmt.Println("Vault file opened in editor.")
+			}
 		case "n":
 			fmt.Print("Enter new vault file name: ")
 			newName, err := reader.ReadString('\n')
@@ -1614,9 +1622,9 @@ func mainMenu(ctx context.Context) error {
 		fmt.Println("  (B)rowse notes")
 		fmt.Println("  (R)ead notes")
 		fmt.Println("  (E)xport note PDF")
-		fmt.Println("  (I)mage copy")
-		fmt.Println("  (V)ault management")
 		fmt.Println("  (T)ag management")
+		fmt.Println("  (V)ault management")
+		fmt.Println("  (I)mage copy")
 		fmt.Println("  (Q)uit")
 		fmt.Println()
 
