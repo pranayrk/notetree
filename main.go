@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -252,7 +253,6 @@ func collectNotesByTag(ctx context.Context) error {
 	// Group entries by their full tag path, organized hierarchically
 	// Structure: parentTag -> childTag -> entries
 	type tagGroup struct {
-		fullTag  string
 		entries  []noteEntry
 		children map[string]*tagGroup // childTag (suffix) -> group
 	}
@@ -290,7 +290,6 @@ func collectNotesByTag(ctx context.Context) error {
 			seenParents[parent] = true
 			parentOrder = append(parentOrder, parent)
 			parentGroups[parent] = &tagGroup{
-				fullTag:  parent,
 				entries:  []noteEntry{},
 				children: make(map[string]*tagGroup),
 			}
@@ -309,7 +308,6 @@ func collectNotesByTag(ctx context.Context) error {
 					// This is the final segment
 					if _, exists := childGroup.children[remainingChild]; !exists {
 						childGroup.children[remainingChild] = &tagGroup{
-							fullTag:  childGroup.fullTag + "/" + remainingChild,
 							entries:  []noteEntry{},
 							children: make(map[string]*tagGroup),
 						}
@@ -322,7 +320,6 @@ func collectNotesByTag(ctx context.Context) error {
 					segment := remainingChild[:nextSlash]
 					if _, exists := childGroup.children[segment]; !exists {
 						childGroup.children[segment] = &tagGroup{
-							fullTag:  childGroup.fullTag + "/" + segment,
 							entries:  []noteEntry{},
 							children: make(map[string]*tagGroup),
 						}
@@ -348,8 +345,8 @@ func collectNotesByTag(ctx context.Context) error {
 	defer file.Close()
 
 	// Recursive function to write tag groups hierarchically
-	var writeTagGroup func(group *tagGroup, indent int) error
-	writeTagGroup = func(group *tagGroup, indent int) error {
+	var writeTagGroup func(group *tagGroup) error
+	writeTagGroup = func(group *tagGroup) error {
 		// Write entries for this group
 		for _, entry := range group.entries {
 			var line string
@@ -370,17 +367,10 @@ func collectNotesByTag(ctx context.Context) error {
 			for name := range group.children {
 				childNames = append(childNames, name)
 			}
-			// Simple sort (no import needed for basic string sort)
-			for i := 0; i < len(childNames)-1; i++ {
-				for j := i + 1; j < len(childNames); j++ {
-					if childNames[i] > childNames[j] {
-						childNames[i], childNames[j] = childNames[j], childNames[i]
-					}
-				}
-			}
+			sort.Strings(childNames)
 
 			for _, childName := range childNames {
-				if err := writeTagGroup(group.children[childName], indent+1); err != nil {
+				if err := writeTagGroup(group.children[childName]); err != nil {
 					return err
 				}
 			}
@@ -390,7 +380,7 @@ func collectNotesByTag(ctx context.Context) error {
 	}
 
 	for _, parent := range parentOrder {
-		if err := writeTagGroup(parentGroups[parent], 0); err != nil {
+		if err := writeTagGroup(parentGroups[parent]); err != nil {
 			return err
 		}
 	}
@@ -502,7 +492,7 @@ func tagMatches(tag, filterTag string) bool {
 
 func parseNoteLine(line string) noteEntry {
 	line = strings.TrimSpace(line)
-	if line == "" || strings.HasPrefix(line, "#") {
+	if line == "" {
 		return noteEntry{}
 	}
 
@@ -780,24 +770,8 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 		return err
 	}
 
-	// Filter entries
-	var filteredEntries []noteEntry
-	for _, entry := range entries {
-		if untaggedOnly {
-			if len(entry.tags) == 0 || (len(entry.tags) == 1 && entry.tags[0] == "") {
-				filteredEntries = append(filteredEntries, entry)
-			}
-		} else if filterTag == "" {
-			filteredEntries = append(filteredEntries, entry)
-		} else {
-			for _, tag := range entry.tags {
-				if tagMatches(tag, filterTag) {
-					filteredEntries = append(filteredEntries, entry)
-					break
-				}
-			}
-		}
-	}
+	// Filter entries using helper function
+	filteredEntries := filterEntries(entries, filterTag, untaggedOnly)
 
 	if len(filteredEntries) == 0 {
 		if untaggedOnly {
@@ -1061,7 +1035,8 @@ func filterEntries(entries []noteEntry, filterTag string, untaggedOnly bool) []n
 	var filtered []noteEntry
 	for _, entry := range entries {
 		if untaggedOnly {
-			if len(entry.tags) == 0 {
+			// Consider note untagged if it has no tags or only empty tag
+			if len(entry.tags) == 0 || (len(entry.tags) == 1 && entry.tags[0] == "") {
 				filtered = append(filtered, entry)
 			}
 		} else if filterTag == "" {
