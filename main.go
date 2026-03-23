@@ -392,6 +392,30 @@ func getFirstTag(tags []string) string {
 	return tag
 }
 
+// tagMatches checks if a tag matches a filter using hierarchical matching.
+// A tag matches if:
+//   - It equals the filter exactly (e.g., "robotics" matches "robotics")
+//   - It is a nested tag under the filter (e.g., "robotics/fpga" matches "robotics")
+//   - It is a deeper nested tag under the filter (e.g., "robotics/fpga/sensor" matches "robotics")
+//
+// Examples:
+//   - tagMatches("robotics/fpga", "robotics") → true
+//   - tagMatches("robotics/fpga", "robotics/fpga") → true
+//   - tagMatches("robotics", "robotics/fpga") → false
+//   - tagMatches("robotics/fpga/sensor", "robotics") → true
+//   - tagMatches("robotics/fpga/sensor", "robotics/fpga") → true
+func tagMatches(tag, filterTag string) bool {
+	if tag == filterTag {
+		return true
+	}
+	// Check if tag is a nested child of filterTag
+	// e.g., "robotics/fpga" should match filter "robotics"
+	if strings.HasPrefix(tag, filterTag+"/") {
+		return true
+	}
+	return false
+}
+
 func parseNoteLine(line string) noteEntry {
 	line = strings.TrimSpace(line)
 	if line == "" || strings.HasPrefix(line, "#") {
@@ -683,7 +707,7 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 			filteredEntries = append(filteredEntries, entry)
 		} else {
 			for _, tag := range entry.tags {
-				if tag == filterTag {
+				if tagMatches(tag, filterTag) {
 					filteredEntries = append(filteredEntries, entry)
 					break
 				}
@@ -960,7 +984,7 @@ func filterEntries(entries []noteEntry, filterTag string, untaggedOnly bool) []n
 			filtered = append(filtered, entry)
 		} else {
 			for _, tag := range entry.tags {
-				if tag == filterTag {
+				if tagMatches(tag, filterTag) {
 					filtered = append(filtered, entry)
 					break
 				}
@@ -1217,7 +1241,7 @@ func moveNotesByTag(ctx context.Context, reader *bufio.Reader) error {
 	for _, entry := range entries {
 		hasTag := false
 		for _, tag := range entry.tags {
-			if tag == tagInput {
+			if tagMatches(tag, tagInput) {
 				hasTag = true
 				break
 			}
@@ -1312,6 +1336,8 @@ func renameTag(ctx context.Context, reader *bufio.Reader) error {
 	}
 
 	// Count how many notes will be affected
+	// Note: Only exact matches are renamed, not nested tags.
+	// e.g., renaming "robotics" won't affect "robotics/fpga"
 	affectedCount := 0
 	for i := range entries {
 		for j, tag := range entries[i].tags {
@@ -1374,7 +1400,7 @@ func deleteNotesByTag(ctx context.Context, reader *bufio.Reader) error {
 	for _, entry := range entries {
 		hasTag := false
 		for _, tag := range entry.tags {
-			if tag == tagInput {
+			if tagMatches(tag, tagInput) {
 				hasTag = true
 				break
 			}
@@ -1460,7 +1486,7 @@ func buildNotesFile(ctx context.Context, filterTag string, includeFilenames bool
 				entries = append(entries, entry)
 			} else {
 				for _, tag := range entry.tags {
-					if tag == filterTag {
+					if tagMatches(tag, filterTag) {
 						entries = append(entries, entry)
 						break
 					}
