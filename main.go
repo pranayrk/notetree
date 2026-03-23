@@ -243,11 +243,6 @@ func collectNotesByTag(ctx context.Context) error {
 	}
 
 	vaultFile := getVaultFile(ctx)
-	return collectNotesByTagInternal(notesPath, vaultFile)
-}
-
-// collectNotesByTagInternal organizes notes by tag in a specific vault file
-func collectNotesByTagInternal(notesPath, vaultFile string) error {
 	notesVaultFile := filepath.Join(notesPath, vaultFile)
 
 	data, err := os.ReadFile(notesVaultFile)
@@ -255,16 +250,10 @@ func collectNotesByTagInternal(notesPath, vaultFile string) error {
 		return fmt.Errorf("failed to read notes vault: %w", err)
 	}
 
-	// Group entries by their full tag path, organized hierarchically
-	// Structure: parentTag -> childTag -> entries
-	type tagGroup struct {
-		entries  []noteEntry
-		children map[string]*tagGroup // childTag (suffix) -> group
-	}
-
-	parentGroups := make(map[string]*tagGroup)
-	var parentOrder []string
-	seenParents := make(map[string]bool)
+	// Group entries by their first tag
+	tagGroups := make(map[string][]noteEntry)
+	var tagOrder []string
+	seenTags := make(map[string]bool)
 
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
@@ -284,78 +273,43 @@ func collectNotesByTagInternal(notesPath, vaultFile string) error {
 			tag = "_untagged"
 		}
 
-		// Get parent and child parts
-		parent := tag
-		child := ""
-		if idx := strings.Index(tag, "/"); idx != -1 {
-			parent = tag[:idx]
-			child = tag[idx+1:]
+		if !seenTags[tag] {
+			seenTags[tag] = true
+			tagOrder = append(tagOrder, tag)
 		}
-
-		// Create or get parent group
-		if !seenParents[parent] {
-			seenParents[parent] = true
-			parentOrder = append(parentOrder, parent)
-			parentGroups[parent] = &tagGroup{
-				entries:  []noteEntry{},
-				children: make(map[string]*tagGroup),
-			}
-		}
-
-		// Add entry to appropriate group (parent or child)
-		if child == "" {
-			parentGroups[parent].entries = append(parentGroups[parent].entries, entry)
-		} else {
-			// Find the deepest matching child group
-			childGroup := parentGroups[parent]
-			remainingChild := child
-			for {
-				nextSlash := strings.Index(remainingChild, "/")
-				if nextSlash == -1 {
-					// This is the final segment
-					if _, exists := childGroup.children[remainingChild]; !exists {
-						childGroup.children[remainingChild] = &tagGroup{
-							entries:  []noteEntry{},
-							children: make(map[string]*tagGroup),
-						}
-					}
-					childGroup = childGroup.children[remainingChild]
-					childGroup.entries = append(childGroup.entries, entry)
-					break
-				} else {
-					// More nesting to follow
-					segment := remainingChild[:nextSlash]
-					if _, exists := childGroup.children[segment]; !exists {
-						childGroup.children[segment] = &tagGroup{
-							entries:  []noteEntry{},
-							children: make(map[string]*tagGroup),
-						}
-					}
-					childGroup = childGroup.children[segment]
-					remainingChild = remainingChild[nextSlash+1:]
-				}
-			}
-		}
+		tagGroups[tag] = append(tagGroups[tag], entry)
 	}
 
-	// If no entries found, preserve the empty file
-	if len(parentOrder) == 0 {
+	// If no entries found, we're done
+	if len(tagOrder) == 0 {
 		fmt.Println("Notes organized by tag successfully.")
 		return nil
 	}
 
-	// Rewrite vault file with entries grouped hierarchically by tag
+	// Sort tags so parent tags come before child tags
+	// e.g., "robotics" before "robotics/tasks" before "robotics/tasks/subtask"
+	sort.Slice(tagOrder, func(i, j int) bool {
+		a, b := tagOrder[i], tagOrder[j]
+		// If one is a prefix of the other, the shorter one comes first
+		if strings.HasPrefix(b, a+"/") {
+			return true
+		}
+		if strings.HasPrefix(a, b+"/") {
+			return false
+		}
+		// Otherwise, sort alphabetically
+		return a < b
+	})
+
+	// Rewrite vault file with entries grouped by tag
 	file, err := os.Create(notesVaultFile)
 	if err != nil {
 		return fmt.Errorf("failed to open notes vault for writing: %w", err)
 	}
 	defer file.Close()
 
-	// Recursive function to write tag groups hierarchically
-	var writeTagGroup func(group *tagGroup) error
-	writeTagGroup = func(group *tagGroup) error {
-		// Write entries for this group
-		for _, entry := range group.entries {
+	for _, tag := range tagOrder {
+		for _, entry := range tagGroups[tag] {
 			var line string
 			if len(entry.tags) > 0 {
 				line = fmt.Sprintf("%s [%s]\n", entry.filename, strings.Join(entry.tags, ","))
@@ -366,43 +320,10 @@ func collectNotesByTagInternal(notesPath, vaultFile string) error {
 				return fmt.Errorf("failed to write to notes vault: %w", err)
 			}
 		}
-
-		// Write child groups (sorted for consistent output)
-		if len(group.children) > 0 {
-			// Sort children for consistent output
-			var childNames []string
-			for name := range group.children {
-				childNames = append(childNames, name)
-			}
-			sort.Strings(childNames)
-
-			for _, childName := range childNames {
-				if err := writeTagGroup(group.children[childName]); err != nil {
-					return err
-				}
-			}
-		}
-
-		return nil
-	}
-
-	for _, parent := range parentOrder {
-		if err := writeTagGroup(parentGroups[parent]); err != nil {
-			return err
-		}
 	}
 
 	fmt.Println("Notes organized by tag successfully.")
 	return nil
-}
-
-// collectNotesByTagForVault organizes notes by tag in a specific vault file (by name)
-func collectNotesByTagForVault(ctx context.Context, vaultFile string) error {
-	notesPath := getNotesPath(ctx)
-	if notesPath == "" {
-		return fmt.Errorf("notes path not configured")
-	}
-	return collectNotesByTagInternal(notesPath, vaultFile)
 }
 
 // ============================================================================
@@ -771,12 +692,9 @@ func moveNoteToVault(ctx context.Context, reader *bufio.Reader, filename string)
 
 	fmt.Printf("Moved '%s' from '%s' to '%s'.\n", filename, currentVaultFile, targetVaultFile)
 
-	// Reorganize both vault files by tag
-	if err := collectNotesByTagInternal(notesPath, currentVaultFile); err != nil {
-		fmt.Printf("Error organizing source vault by tag: %v\n", err)
-	}
-	if err := collectNotesByTagInternal(notesPath, targetVaultFile); err != nil {
-		fmt.Printf("Error organizing target vault by tag: %v\n", err)
+	// Reorganize current vault file by tag
+	if err := collectNotesByTag(ctx); err != nil {
+		fmt.Printf("Error organizing vault by tag: %v\n", err)
 	}
 
 	return nil
@@ -1374,12 +1292,9 @@ func moveNotesByTag(ctx context.Context, reader *bufio.Reader) error {
 
 	fmt.Printf("Moved %d note(s) with tag '%s' from '%s' to '%s'.\n", len(notesToMove), tagInput, currentVaultFile, targetVaultFile)
 
-	// Reorganize both vault files by tag
-	if err := collectNotesByTagInternal(notesPath, currentVaultFile); err != nil {
-		fmt.Printf("Error organizing source vault by tag: %v\n", err)
-	}
-	if err := collectNotesByTagInternal(notesPath, targetVaultFile); err != nil {
-		fmt.Printf("Error organizing target vault by tag: %v\n", err)
+	// Reorganize current vault file by tag
+	if err := collectNotesByTag(ctx); err != nil {
+		fmt.Printf("Error organizing vault by tag: %v\n", err)
 	}
 
 	return nil
