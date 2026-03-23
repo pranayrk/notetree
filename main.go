@@ -1335,14 +1335,21 @@ func renameTag(ctx context.Context, reader *bufio.Reader) error {
 		return err
 	}
 
-	// Count how many notes will be affected
-	// Note: Only exact matches are renamed, not nested tags.
-	// e.g., renaming "robotics" won't affect "robotics/fpga"
+	// Count and rename all matching tags (exact + nested)
+	// e.g., renaming "robotics" to "robot" changes:
+	//   - "robotics" → "robot"
+	//   - "robotics/fpga" → "robot/fpga"
+	//   - "robotics/fpga/sensor" → "robot/fpga/sensor"
 	affectedCount := 0
 	for i := range entries {
 		for j, tag := range entries[i].tags {
 			if tag == oldTag {
+				// Exact match
 				entries[i].tags[j] = newTag
+				affectedCount++
+			} else if strings.HasPrefix(tag, oldTag+"/") {
+				// Nested tag - replace the prefix
+				entries[i].tags[j] = newTag + tag[len(oldTag):]
 				affectedCount++
 			}
 		}
