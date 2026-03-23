@@ -243,6 +243,11 @@ func collectNotesByTag(ctx context.Context) error {
 	}
 
 	vaultFile := getVaultFile(ctx)
+	return collectNotesByTagInternal(notesPath, vaultFile)
+}
+
+// collectNotesByTagInternal organizes notes by tag in a specific vault file
+func collectNotesByTagInternal(notesPath, vaultFile string) error {
 	notesVaultFile := filepath.Join(notesPath, vaultFile)
 
 	data, err := os.ReadFile(notesVaultFile)
@@ -389,6 +394,15 @@ func collectNotesByTag(ctx context.Context) error {
 
 	fmt.Println("Notes organized by tag successfully.")
 	return nil
+}
+
+// collectNotesByTagForVault organizes notes by tag in a specific vault file (by name)
+func collectNotesByTagForVault(ctx context.Context, vaultFile string) error {
+	notesPath := getNotesPath(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
+	}
+	return collectNotesByTagInternal(notesPath, vaultFile)
 }
 
 // ============================================================================
@@ -607,6 +621,9 @@ func createNotesInteractive(ctx context.Context) error {
 		if err := addNoteToVault(notesPath, vaultFile, filename, tags); err != nil {
 			fmt.Printf("Failed to add note to vault: %v\n", err)
 		}
+		if err := collectNotesByTag(ctx); err != nil {
+			fmt.Printf("Error organizing notes by tag: %v\n", err)
+		}
 		fmt.Println()
 	}
 	return nil
@@ -753,6 +770,15 @@ func moveNoteToVault(ctx context.Context, reader *bufio.Reader, filename string)
 	}
 
 	fmt.Printf("Moved '%s' from '%s' to '%s'.\n", filename, currentVaultFile, targetVaultFile)
+
+	// Reorganize both vault files by tag
+	if err := collectNotesByTagInternal(notesPath, currentVaultFile); err != nil {
+		fmt.Printf("Error organizing source vault by tag: %v\n", err)
+	}
+	if err := collectNotesByTagInternal(notesPath, targetVaultFile); err != nil {
+		fmt.Printf("Error organizing target vault by tag: %v\n", err)
+	}
+
 	return nil
 }
 
@@ -1348,8 +1374,12 @@ func moveNotesByTag(ctx context.Context, reader *bufio.Reader) error {
 
 	fmt.Printf("Moved %d note(s) with tag '%s' from '%s' to '%s'.\n", len(notesToMove), tagInput, currentVaultFile, targetVaultFile)
 
-	if err := collectNotesByTag(ctx); err != nil {
-		fmt.Printf("Error organizing notes by tag: %v\n", err)
+	// Reorganize both vault files by tag
+	if err := collectNotesByTagInternal(notesPath, currentVaultFile); err != nil {
+		fmt.Printf("Error organizing source vault by tag: %v\n", err)
+	}
+	if err := collectNotesByTagInternal(notesPath, targetVaultFile); err != nil {
+		fmt.Printf("Error organizing target vault by tag: %v\n", err)
 	}
 
 	return nil
