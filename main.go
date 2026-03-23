@@ -351,13 +351,12 @@ func collectNotesByTag(ctx context.Context) error {
 	var writeTagGroup func(group *tagGroup, indent int) error
 	writeTagGroup = func(group *tagGroup, indent int) error {
 		// Write entries for this group
-		indentStr := strings.Repeat("  ", indent)
 		for _, entry := range group.entries {
 			var line string
 			if len(entry.tags) > 0 {
-				line = fmt.Sprintf("%s%s [%s]\n", indentStr, entry.filename, strings.Join(entry.tags, ","))
+				line = fmt.Sprintf("%s [%s]\n", entry.filename, strings.Join(entry.tags, ","))
 			} else {
-				line = fmt.Sprintf("%s%s\n", indentStr, entry.filename)
+				line = fmt.Sprintf("%s\n", entry.filename)
 			}
 			if _, err := file.WriteString(line); err != nil {
 				return fmt.Errorf("failed to write to notes vault: %w", err)
