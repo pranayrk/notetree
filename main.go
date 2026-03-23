@@ -32,17 +32,6 @@ const (
 type noteEntry struct {
 	filename string
 	tags     []string
-	firstTag string
-}
-
-// getVaultInfo returns both notes path and vault file from context
-func getVaultInfo(ctx context.Context) (string, string) {
-	return getNotesPath(ctx), getVaultFile(ctx)
-}
-
-// getVaultFilePath returns the full path to the vault file
-func getVaultFilePath(notesPath, vaultFile string) string {
-	return filepath.Join(notesPath, vaultFile)
 }
 
 // ============================================================================
@@ -88,7 +77,7 @@ func setupConfig(ctx context.Context) (context.Context, error) {
 // ============================================================================
 
 func loadNotes(notesPath, vaultFile string) ([]noteEntry, error) {
-	notesVaultFile := getVaultFilePath(notesPath, vaultFile)
+	notesVaultFile := filepath.Join(notesPath, vaultFile)
 	data, err := os.ReadFile(notesVaultFile)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -111,7 +100,7 @@ func loadNotes(notesPath, vaultFile string) ([]noteEntry, error) {
 }
 
 func saveNotes(notesPath, vaultFile string, entries []noteEntry) error {
-	notesVaultFile := getVaultFilePath(notesPath, vaultFile)
+	notesVaultFile := filepath.Join(notesPath, vaultFile)
 
 	file, err := os.Create(notesVaultFile)
 	if err != nil {
@@ -142,7 +131,6 @@ func addNoteToVault(notesPath, vaultFile, filename string, tags []string) error 
 	entries = append(entries, noteEntry{
 		filename: filename,
 		tags:     tags,
-		firstTag: getFirstTag(tags),
 	})
 	return saveNotes(notesPath, vaultFile, entries)
 }
@@ -156,7 +144,6 @@ func updateNoteTags(notesPath, vaultFile, filename string, tags []string) error 
 	for i := range entries {
 		if entries[i].filename == filename {
 			entries[i].tags = tags
-			entries[i].firstTag = getFirstTag(tags)
 			break
 		}
 	}
@@ -246,10 +233,11 @@ func renameNoteFile(ctx context.Context, reader *bufio.Reader, oldFilename strin
 }
 
 func collectNotesByTag(ctx context.Context) error {
-	notesPath, vaultFile := getVaultInfo(ctx)
+	notesPath := getNotesPath(ctx)
 	if notesPath == "" {
 		return fmt.Errorf("notes path not configured")
 	}
+	vaultFile := getVaultFile(ctx)
 	notesVaultFile := filepath.Join(notesPath, vaultFile)
 
 	data, err := os.ReadFile(notesVaultFile)
@@ -383,17 +371,6 @@ func promptForTags(reader *bufio.Reader) ([]string, error) {
 	return tags, nil
 }
 
-func getFirstTag(tags []string) string {
-	if len(tags) == 0 {
-		return ""
-	}
-	tag := tags[0]
-	if idx := strings.Index(tag, "/"); idx != -1 && idx > 0 {
-		return tag[:idx]
-	}
-	return tag
-}
-
 // tagMatches checks if a tag matches a filter using hierarchical matching.
 // A tag matches if:
 //   - It equals the filter exactly (e.g., "robotics" matches "robotics")
@@ -435,10 +412,8 @@ func parseNoteLine(line string) noteEntry {
 				entry.tags = append(entry.tags, tag)
 			}
 		}
-		entry.firstTag = getFirstTag(entry.tags)
 	} else {
 		entry.filename = line
-		entry.firstTag = ""
 	}
 	return entry
 }
@@ -1350,8 +1325,6 @@ func renameTag(ctx context.Context, reader *bufio.Reader) error {
 				affectedCount++
 			}
 		}
-		// Update firstTag if needed
-		entries[i].firstTag = getFirstTag(entries[i].tags)
 	}
 
 	if affectedCount == 0 {
