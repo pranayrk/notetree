@@ -271,8 +271,10 @@ func collectNotesByTag(ctx context.Context) error {
 			continue
 		}
 
-		// Use first tag for grouping
-		tag := entry.firstTag
+		tag := ""
+		if len(entry.tags) > 0 {
+			tag = entry.tags[0]
+		}
 		if tag == "" {
 			tag = "_untagged"
 		}
