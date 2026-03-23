@@ -249,10 +249,17 @@ func collectNotesByTag(ctx context.Context) error {
 		return fmt.Errorf("failed to read notes vault: %w", err)
 	}
 
-	// Group entries by their first tag
-	tagEntries := make(map[string][]noteEntry)
-	var tagOrder []string
-	seenTags := make(map[string]bool)
+	// Group entries by their full tag path, organized hierarchically
+	// Structure: parentTag -> childTag -> entries
+	type tagGroup struct {
+		fullTag  string
+		entries  []noteEntry
+		children map[string]*tagGroup // childTag (suffix) -> group
+	}
+
+	parentGroups := make(map[string]*tagGroup)
+	var parentOrder []string
+	seenParents := make(map[string]bool)
 
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
@@ -264,50 +271,137 @@ func collectNotesByTag(ctx context.Context) error {
 			continue
 		}
 
+		// Use first tag for grouping
 		tag := entry.firstTag
 		if tag == "" {
 			tag = "_untagged"
 		}
 
-		if !seenTags[tag] {
-			seenTags[tag] = true
-			tagOrder = append(tagOrder, tag)
+		// Get parent and child parts
+		parent := tag
+		child := ""
+		if idx := strings.Index(tag, "/"); idx != -1 {
+			parent = tag[:idx]
+			child = tag[idx+1:]
 		}
-		tagEntries[tag] = append(tagEntries[tag], entry)
+
+		// Create or get parent group
+		if !seenParents[parent] {
+			seenParents[parent] = true
+			parentOrder = append(parentOrder, parent)
+			parentGroups[parent] = &tagGroup{
+				fullTag:  parent,
+				entries:  []noteEntry{},
+				children: make(map[string]*tagGroup),
+			}
+		}
+
+		// Add entry to appropriate group (parent or child)
+		if child == "" {
+			parentGroups[parent].entries = append(parentGroups[parent].entries, entry)
+		} else {
+			// Find the deepest matching child group
+			childGroup := parentGroups[parent]
+			remainingChild := child
+			for {
+				nextSlash := strings.Index(remainingChild, "/")
+				if nextSlash == -1 {
+					// This is the final segment
+					if _, exists := childGroup.children[remainingChild]; !exists {
+						childGroup.children[remainingChild] = &tagGroup{
+							fullTag:  childGroup.fullTag + "/" + remainingChild,
+							entries:  []noteEntry{},
+							children: make(map[string]*tagGroup),
+						}
+					}
+					childGroup = childGroup.children[remainingChild]
+					childGroup.entries = append(childGroup.entries, entry)
+					break
+				} else {
+					// More nesting to follow
+					segment := remainingChild[:nextSlash]
+					if _, exists := childGroup.children[segment]; !exists {
+						childGroup.children[segment] = &tagGroup{
+							fullTag:  childGroup.fullTag + "/" + segment,
+							entries:  []noteEntry{},
+							children: make(map[string]*tagGroup),
+						}
+					}
+					childGroup = childGroup.children[segment]
+					remainingChild = remainingChild[nextSlash+1:]
+				}
+			}
+		}
 	}
 
 	// If no entries found, preserve the empty file
-	if len(tagOrder) == 0 {
+	if len(parentOrder) == 0 {
 		fmt.Println("Notes organized by tag successfully.")
 		return nil
 	}
 
-	// Rewrite vault file with entries grouped by tag
+	// Rewrite vault file with entries grouped hierarchically by tag
 	file, err := os.Create(notesVaultFile)
 	if err != nil {
 		return fmt.Errorf("failed to open notes vault for writing: %w", err)
 	}
 	defer file.Close()
 
-	for _, tag := range tagOrder {
-		if _, err := fmt.Fprintf(file, "# Tag: %s\n", tag); err != nil {
+	// Recursive function to write tag groups hierarchically
+	var writeTagGroup func(group *tagGroup, indent int) error
+	writeTagGroup = func(group *tagGroup, indent int) error {
+		// Write header for this group
+		prefix := strings.Repeat("  ", indent)
+		if _, err := fmt.Fprintf(file, "%s# Tag: %s\n", prefix, group.fullTag); err != nil {
 			return fmt.Errorf("failed to write to notes vault: %w", err)
 		}
 
-		for _, entry := range tagEntries[tag] {
+		// Write entries for this group
+		for _, entry := range group.entries {
 			var line string
 			if len(entry.tags) > 0 {
-				line = fmt.Sprintf("%s [%s]\n", entry.filename, strings.Join(entry.tags, ","))
+				line = fmt.Sprintf("%s%s [%s]\n", prefix, entry.filename, strings.Join(entry.tags, ","))
 			} else {
-				line = fmt.Sprintf("%s\n", entry.filename)
+				line = fmt.Sprintf("%s%s\n", prefix, entry.filename)
 			}
 			if _, err := file.WriteString(line); err != nil {
 				return fmt.Errorf("failed to write to notes vault: %w", err)
 			}
 		}
 
+		// Write child groups (sorted for consistent output)
+		if len(group.children) > 0 {
+			// Sort children for consistent output
+			var childNames []string
+			for name := range group.children {
+				childNames = append(childNames, name)
+			}
+			// Simple sort (no import needed for basic string sort)
+			for i := 0; i < len(childNames)-1; i++ {
+				for j := i + 1; j < len(childNames); j++ {
+					if childNames[i] > childNames[j] {
+						childNames[i], childNames[j] = childNames[j], childNames[i]
+					}
+				}
+			}
+
+			for _, childName := range childNames {
+				if err := writeTagGroup(group.children[childName], indent+1); err != nil {
+					return err
+				}
+			}
+		}
+
 		if _, err := file.WriteString("\n"); err != nil {
 			return fmt.Errorf("failed to write to notes vault: %w", err)
+		}
+
+		return nil
+	}
+
+	for _, parent := range parentOrder {
+		if err := writeTagGroup(parentGroups[parent], 0); err != nil {
+			return err
 		}
 	}
 
