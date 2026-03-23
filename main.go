@@ -26,7 +26,7 @@ type contextKey string
 
 const (
 	notesPathKey contextKey = "notes_path"
-	vaultFileKey   contextKey = "vault_file"
+	vaultFileKey contextKey = "vault_file"
 )
 
 // noteEntry represents a note with its metadata
@@ -34,6 +34,16 @@ type noteEntry struct {
 	filename string
 	tags     []string
 	firstTag string
+}
+
+// getVaultInfo returns both notes path and vault file from context
+func getVaultInfo(ctx context.Context) (string, string) {
+	return getNotesPath(ctx), getVaultFile(ctx)
+}
+
+// getVaultFilePath returns the full path to the vault file
+func getVaultFilePath(notesPath, vaultFile string) string {
+	return filepath.Join(notesPath, vaultFile)
 }
 
 // ============================================================================
@@ -79,7 +89,7 @@ func setupConfig(ctx context.Context) (context.Context, error) {
 // ============================================================================
 
 func loadNotes(notesPath, vaultFile string) ([]noteEntry, error) {
-	notesVaultFile := filepath.Join(notesPath, vaultFile)
+	notesVaultFile := getVaultFilePath(notesPath, vaultFile)
 	data, err := os.ReadFile(notesVaultFile)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -102,7 +112,7 @@ func loadNotes(notesPath, vaultFile string) ([]noteEntry, error) {
 }
 
 func saveNotes(notesPath, vaultFile string, entries []noteEntry) error {
-	notesVaultFile := filepath.Join(notesPath, vaultFile)
+	notesVaultFile := getVaultFilePath(notesPath, vaultFile)
 
 	file, err := os.Create(notesVaultFile)
 	if err != nil {
@@ -237,12 +247,10 @@ func renameNoteFile(ctx context.Context, reader *bufio.Reader, oldFilename strin
 }
 
 func collectNotesByTag(ctx context.Context) error {
-	notesPath := getNotesPath(ctx)
+	notesPath, vaultFile := getVaultInfo(ctx)
 	if notesPath == "" {
 		return fmt.Errorf("notes path not configured")
 	}
-
-	vaultFile := getVaultFile(ctx)
 	notesVaultFile := filepath.Join(notesPath, vaultFile)
 
 	data, err := os.ReadFile(notesVaultFile)
