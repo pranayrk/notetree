@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -290,26 +289,11 @@ func collectNotesByTag(ctx context.Context) error {
 
 	// If no entries found, we're done
 	if len(tagOrder) == 0 {
-		fmt.Println("Notes organized by tag successfully.")
 		return nil
 	}
 
-	// Sort tags so parent tags come before child tags
-	// e.g., "robotics" before "robotics/tasks" before "robotics/tasks/subtask"
-	sort.Slice(tagOrder, func(i, j int) bool {
-		a, b := tagOrder[i], tagOrder[j]
-		// If one is a prefix of the other, the shorter one comes first
-		if strings.HasPrefix(b, a+"/") {
-			return true
-		}
-		if strings.HasPrefix(a, b+"/") {
-			return false
-		}
-		// Otherwise, sort alphabetically
-		return a < b
-	})
-
 	// Rewrite vault file with entries grouped by tag
+	// Tags are written in the order they first appeared in the file
 	file, err := os.Create(notesVaultFile)
 	if err != nil {
 		return fmt.Errorf("failed to open notes vault for writing: %w", err)
@@ -330,7 +314,6 @@ func collectNotesByTag(ctx context.Context) error {
 		}
 	}
 
-	fmt.Println("Notes organized by tag successfully.")
 	return nil
 }
 
