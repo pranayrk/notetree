@@ -666,6 +666,89 @@ func moveNoteToVault(ctx context.Context, reader *bufio.Reader, filename string)
 	return nil
 }
 
+// getOrCreateArchiveVault ensures the archive.vault file exists and returns its path
+func getOrCreateArchiveVault(notesPath string) (string, error) {
+	archiveVault := "archive.vault"
+	archiveVaultPath := filepath.Join(notesPath, archiveVault)
+
+	// Create archive.vault if it doesn't exist
+	if _, err := os.Stat(archiveVaultPath); os.IsNotExist(err) {
+		if err := os.WriteFile(archiveVaultPath, []byte{}, 0644); err != nil {
+			return "", fmt.Errorf("failed to create archive vault: %w", err)
+		}
+	}
+
+	return archiveVault, nil
+}
+
+// archiveNote moves a note from the current vault to archive.vault
+func archiveNote(ctx context.Context, reader *bufio.Reader, filename string) error {
+	notesPath := getNotesPath(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
+	}
+
+	currentVaultFile := getVaultFile(ctx)
+
+	// Get or create archive vault
+	archiveVault, err := getOrCreateArchiveVault(notesPath)
+	if err != nil {
+		return err
+	}
+
+	// Don't allow archiving from archive vault itself
+	if currentVaultFile == archiveVault {
+		fmt.Println("Note is already in the archive vault.")
+		return nil
+	}
+
+	// Load current entries and find the note
+	entries, err := loadNotes(notesPath, currentVaultFile)
+	if err != nil {
+		return err
+	}
+
+	var noteEntry *noteEntry
+	var entryIdx int
+	for i, e := range entries {
+		if e.filename == filename {
+			noteEntry = &e
+			entryIdx = i
+			break
+		}
+	}
+
+	if noteEntry == nil {
+		fmt.Printf("Note not found: %s\n", filename)
+		return nil
+	}
+
+	// Remove from current vault file
+	newEntries := append(entries[:entryIdx], entries[entryIdx+1:]...)
+	if err := saveNotes(notesPath, currentVaultFile, newEntries); err != nil {
+		return err
+	}
+
+	// Add to archive vault
+	archiveEntries, err := loadNotes(notesPath, archiveVault)
+	if err != nil {
+		return err
+	}
+	archiveEntries = append(archiveEntries, *noteEntry)
+	if err := saveNotes(notesPath, archiveVault, archiveEntries); err != nil {
+		return err
+	}
+
+	fmt.Printf("Archived '%s' to '%s'.\n", filename, archiveVault)
+
+	// Reorganize current vault file by tag
+	if err := collectNotesByTag(ctx); err != nil {
+		fmt.Printf("Error organizing vault by tag: %v\n", err)
+	}
+
+	return nil
+}
+
 // browseNotesInteractive displays notes one by one with action options
 func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly bool) error {
 	notesPath := getNotesPath(ctx)
@@ -743,6 +826,7 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 		fmt.Println("  (T)ags update")
 		fmt.Println("  (D)elete note")
 		fmt.Println("  (M)ove to another map file")
+		fmt.Println("  (A)rchive note")
 		fmt.Println("  (V)iew full content in markdown reader")
 		fmt.Println("  (N)ext / (P)revious / (Q)uit")
 		fmt.Println()
@@ -868,6 +952,25 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 				if err := collectNotesByTag(ctx); err != nil {
 					fmt.Printf("Error organizing notes by tag: %v\n", err)
 				}
+				// Reload entries
+				if entries, err = loadNotes(notesPath, vaultFile); err != nil {
+					fmt.Printf("Failed to reload notes: %v\n", err)
+					return err
+				}
+				filteredEntries = filterEntries(entries, filterTag, untaggedOnly)
+				// Don't increment i, stay at same position
+				if len(filteredEntries) == 0 {
+					fmt.Println("\nNo more notes to browse.")
+					return nil
+				}
+				if i >= len(filteredEntries) {
+					i = len(filteredEntries) - 1 // Move to last available entry
+				}
+			}
+		case "a", "archive":
+			if err := archiveNote(ctx, reader, entry.filename); err != nil {
+				fmt.Printf("Failed to archive note: %v\n", err)
+			} else {
 				// Reload entries
 				if entries, err = loadNotes(notesPath, vaultFile); err != nil {
 					fmt.Printf("Failed to reload notes: %v\n", err)
@@ -1107,6 +1210,7 @@ func manageTags(ctx context.Context, reader *bufio.Reader) error {
 		}
 		fmt.Println()
 		fmt.Println("  (M)ove notes with tag to another vault")
+		fmt.Println("  (A)rchive notes with tag")
 		fmt.Println("  (R)ename tag")
 		fmt.Println("  (D)elete notes with tag")
 		fmt.Println("  (Q)uit")
@@ -1125,6 +1229,10 @@ func manageTags(ctx context.Context, reader *bufio.Reader) error {
 		case "m", "move":
 			if err := moveNotesByTag(ctx, reader); err != nil {
 				fmt.Printf("Error moving notes: %v\n", err)
+			}
+		case "a", "archive":
+			if err := archiveNotesByTag(ctx, reader); err != nil {
+				fmt.Printf("Error archiving notes: %v\n", err)
 			}
 		case "r", "rename":
 			if err := renameTag(ctx, reader); err != nil {
@@ -1257,6 +1365,109 @@ func moveNotesByTag(ctx context.Context, reader *bufio.Reader) error {
 	}
 
 	fmt.Printf("Moved %d note(s) with tag '%s' from '%s' to '%s'.\n", len(notesToMove), tagInput, currentVaultFile, targetVaultFile)
+
+	// Reorganize current vault file by tag
+	if err := collectNotesByTag(ctx); err != nil {
+		fmt.Printf("Error organizing vault by tag: %v\n", err)
+	}
+
+	return nil
+}
+
+// archiveNotesByTag moves all notes with a specific tag to archive.vault
+func archiveNotesByTag(ctx context.Context, reader *bufio.Reader) error {
+	notesPath := getNotesPath(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
+	}
+
+	currentVaultFile := getVaultFile(ctx)
+
+	// Get or create archive vault
+	archiveVault, err := getOrCreateArchiveVault(notesPath)
+	if err != nil {
+		return err
+	}
+
+	// Don't allow archiving from archive vault itself
+	if currentVaultFile == archiveVault {
+		fmt.Println("Already in the archive vault.")
+		return nil
+	}
+
+	fmt.Print("Enter tag to archive: ")
+	tagInput, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("failed to read input: %w", err)
+	}
+	tagInput = strings.TrimSpace(tagInput)
+	if tagInput == "" {
+		fmt.Println("Tag cannot be empty.")
+		return nil
+	}
+
+	// Load current entries
+	entries, err := loadNotes(notesPath, currentVaultFile)
+	if err != nil {
+		return err
+	}
+
+	// Find notes with the specified tag
+	var notesToArchive []noteEntry
+	var notesToKeep []noteEntry
+	for _, entry := range entries {
+		hasTag := false
+		for _, tag := range entry.tags {
+			if tagMatches(tag, tagInput) {
+				hasTag = true
+				break
+			}
+		}
+		if hasTag {
+			notesToArchive = append(notesToArchive, entry)
+		} else {
+			notesToKeep = append(notesToKeep, entry)
+		}
+	}
+
+	if len(notesToArchive) == 0 {
+		fmt.Printf("No notes found with tag: %s\n", tagInput)
+		return nil
+	}
+
+	fmt.Printf("Found %d note(s) with tag '%s'.\n", len(notesToArchive), tagInput)
+	fmt.Println("The following notes will be archived:")
+	for _, entry := range notesToArchive {
+		fmt.Printf("  - %s\n", entry.filename)
+	}
+	fmt.Println()
+	fmt.Printf("Archive these notes to '%s'? (y/n): ", archiveVault)
+	confirm, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("failed to read confirmation: %w", err)
+	}
+
+	if strings.ToLower(strings.TrimSpace(confirm)) != "y" {
+		fmt.Println("Cancelled.")
+		return nil
+	}
+
+	// Remove from current vault
+	if err := saveNotes(notesPath, currentVaultFile, notesToKeep); err != nil {
+		return err
+	}
+
+	// Add to archive vault
+	archiveEntries, err := loadNotes(notesPath, archiveVault)
+	if err != nil {
+		return err
+	}
+	archiveEntries = append(archiveEntries, notesToArchive...)
+	if err := saveNotes(notesPath, archiveVault, archiveEntries); err != nil {
+		return err
+	}
+
+	fmt.Printf("Archived %d note(s) with tag '%s' to '%s'.\n", len(notesToArchive), tagInput, archiveVault)
 
 	// Reorganize current vault file by tag
 	if err := collectNotesByTag(ctx); err != nil {
