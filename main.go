@@ -8,11 +8,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/pranay/notetree/config"
 	"github.com/urfave/cli/v3"
+	"golang.org/x/term"
 )
 
 // Application constants
@@ -395,6 +397,318 @@ func tagMatches(tag, filterTag string) bool {
 	return false
 }
 
+// ============================================================================
+// Terminal Control and Autocomplete
+// ============================================================================
+
+// readKey reads a single key press from stdin
+func readKey() (rune, error) {
+	b := make([]byte, 1)
+	_, err := os.Stdin.Read(b)
+	if err != nil {
+		return 0, err
+	}
+	return rune(b[0]), nil
+}
+
+// readEscapeSequence reads escape sequences for special keys
+func readEscapeSequence() (rune, error) {
+	// Read '[' after ESC
+	b := make([]byte, 1)
+	_, err := os.Stdin.Read(b)
+	if err != nil {
+		return 0, err
+	}
+	
+	if b[0] == '[' {
+		// Read the next character to determine the key
+		_, err := os.Stdin.Read(b)
+		if err != nil {
+			return 0, err
+		}
+		switch b[0] {
+		case 'A':
+			return '↑', nil // Up arrow
+		case 'B':
+			return '↓', nil // Down arrow
+		case 'C':
+			return '→', nil // Right arrow
+		case 'D':
+			return '←', nil // Left arrow
+		case '3':
+			// Delete key, consume '~'
+			os.Stdin.Read(b)
+			return '×', nil // Delete
+		default:
+			return rune(b[0]), nil
+		}
+	}
+	return rune(b[0]), nil
+}
+
+// clearLine clears the current line and moves cursor to beginning
+func clearLine() {
+	fmt.Print("\033[2K\033[0G")
+}
+
+// moveCursorLeft moves cursor left by n positions
+func moveCursorLeft(n int) {
+	if n > 0 {
+		fmt.Printf("\033[%dD", n)
+	}
+}
+
+// getAllTags collects all unique tags from the vault file
+func getAllTags(notesPath, vaultFile string) ([]string, error) {
+	entries, err := loadNotes(notesPath, vaultFile)
+	if err != nil {
+		return nil, err
+	}
+
+	tagSet := make(map[string]bool)
+	for _, entry := range entries {
+		for _, tag := range entry.tags {
+			if tag != "" {
+				tagSet[tag] = true
+			}
+		}
+	}
+
+	tags := make([]string, 0, len(tagSet))
+	for tag := range tagSet {
+		tags = append(tags, tag)
+	}
+	sort.Strings(tags)
+	return tags, nil
+}
+
+// findTagCompletions finds tags that start with the given prefix
+func findTagCompletions(allTags []string, prefix string) []string {
+	if prefix == "" {
+		return allTags
+	}
+
+	var completions []string
+	for _, tag := range allTags {
+		if strings.HasPrefix(tag, prefix) {
+			completions = append(completions, tag)
+		}
+	}
+	return completions
+}
+
+// completeTag attempts to autocomplete a tag prefix
+// Returns the completed tag and whether there were multiple matches
+func completeTag(allTags []string, prefix string) (string, bool) {
+	completions := findTagCompletions(allTags, prefix)
+	if len(completions) == 0 {
+		return prefix, false
+	}
+	if len(completions) == 1 {
+		return completions[0], false
+	}
+	// Multiple completions - find common prefix
+	common := completions[0]
+	for _, tag := range completions[1:] {
+		for len(common) > 0 && !strings.HasPrefix(tag, common) {
+			common = common[:len(common)-1]
+		}
+	}
+	if len(common) > len(prefix) {
+		return common, false
+	}
+	// No common prefix to add, show all completions
+	return prefix, true
+}
+
+// showCompletions displays matching tags to the user
+func showCompletions(completions []string, cursorPos int, currentInput string) {
+	if len(completions) == 0 {
+		return
+	}
+
+	// Limit to first 10 suggestions
+	maxDisplay := 10
+	displayCount := len(completions)
+	if displayCount > maxDisplay {
+		displayCount = maxDisplay
+	}
+
+	// Use \r\n for raw mode compatibility (terminal is in raw mode)
+	fmt.Print("\r\n")
+	fmt.Print("\033[90mSuggestions:\033[0m\r\n")
+	for i := 0; i < displayCount; i++ {
+		fmt.Printf("  \033[36m%s\033[0m\r\n", completions[i])
+	}
+	if len(completions) > maxDisplay {
+		fmt.Printf("  \033[90m... and %d more\033[0m\r\n", len(completions)-maxDisplay)
+	}
+
+	// Move cursor back up to the input line
+	// +1 for the initial newline, +1 for "Suggestions:" line, +displayCount for tags, +1 for "and X more" if shown
+	linesUp := 2 + displayCount
+	if len(completions) > maxDisplay {
+		linesUp++
+	}
+	fmt.Printf("\033[%dA", linesUp)
+
+	// Redraw the input line
+	clearLine()
+	fmt.Print("Enter tags (comma-separated, Tab for autocomplete): ")
+	fmt.Print(currentInput)
+	moveCursorLeft(len(currentInput) - cursorPos)
+}
+
+// promptForTagsWithAutocomplete prompts for tags with tab completion support
+func promptForTagsWithAutocomplete(notesPath, vaultFile string) ([]string, error) {
+	// Get all existing tags for autocomplete
+	allTags, err := getAllTags(notesPath, vaultFile)
+	if err != nil {
+		// Fall back to simple prompt if we can't load tags
+		return promptForTagsSimple()
+	}
+
+	// Check if terminal supports raw mode
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return promptForTagsSimple()
+	}
+
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return promptForTagsSimple()
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+	fmt.Print("Enter tags (comma-separated, Tab for autocomplete): ")
+
+	var input strings.Builder
+	cursorPos := 0
+
+	for {
+		key, err := readKey()
+		if err != nil {
+			return nil, err
+		}
+
+		switch key {
+		case '\t': // Tab - autocomplete
+			// Find the current word (tag being typed)
+			currentInput := input.String()
+			wordStart := strings.LastIndexByte(currentInput[:cursorPos], ',')
+			if wordStart == -1 {
+				wordStart = 0
+			} else {
+				wordStart++ // Skip the comma
+			}
+			prefix := currentInput[wordStart:cursorPos]
+			
+			completions := findTagCompletions(allTags, strings.TrimSpace(prefix))
+			if len(completions) == 1 {
+				// Single match - complete it
+				completion := completions[0]
+				input.WriteString(completion[len(prefix):])
+				cursorPos = input.Len()
+				clearLine()
+				fmt.Print("Enter tags (comma-separated, Tab for autocomplete): ")
+				fmt.Print(input.String())
+			} else if len(completions) > 1 {
+				// Multiple matches - show suggestions
+				showCompletions(completions, cursorPos, input.String())
+			}
+			// No matches - do nothing
+
+		case '\r', '\n': // Enter - accept
+			fmt.Println()
+			tags := parseTagsInput(input.String())
+			return tags, nil
+
+		case 127, 8: // Backspace
+			if cursorPos > 0 {
+				inputStr := input.String()
+				newStr := inputStr[:cursorPos-1] + inputStr[cursorPos:]
+				input.Reset()
+				input.WriteString(newStr)
+				cursorPos--
+				clearLine()
+				fmt.Print("Enter tags (comma-separated, Tab for autocomplete): ")
+				fmt.Print(input.String())
+				moveCursorLeft(len(input.String()) - cursorPos)
+			}
+
+		case '×': // Delete key
+			if cursorPos < input.Len() {
+				inputStr := input.String()
+				newStr := inputStr[:cursorPos] + inputStr[cursorPos+1:]
+				input.Reset()
+				input.WriteString(newStr)
+				clearLine()
+				fmt.Print("Enter tags (comma-separated, Tab for autocomplete): ")
+				fmt.Print(input.String())
+				moveCursorLeft(len(input.String()) - cursorPos)
+			}
+
+		case '←': // Left arrow
+			if cursorPos > 0 {
+				cursorPos--
+				moveCursorLeft(1)
+			}
+
+		case '→': // Right arrow
+			if cursorPos < input.Len() {
+				cursorPos++
+				fmt.Print(string(key))
+			}
+
+		case 3: // Ctrl+C
+			fmt.Println("\n\033[33mCancelled.\033[0m")
+			return []string{}, nil
+
+		default:
+			// Insert character at cursor position
+			if key >= 32 && key < 127 { // Printable ASCII
+				inputStr := input.String()
+				newStr := inputStr[:cursorPos] + string(key) + inputStr[cursorPos:]
+				input.Reset()
+				input.WriteString(newStr)
+				cursorPos++
+				clearLine()
+				fmt.Print("Enter tags (comma-separated, Tab for autocomplete): ")
+				fmt.Print(input.String())
+				moveCursorLeft(len(input.String()) - cursorPos)
+			}
+		}
+	}
+}
+
+// promptForTagsSimple is the fallback simple prompt without autocomplete
+func promptForTagsSimple() ([]string, error) {
+	fmt.Print("Enter tags (comma-separated, or press Enter to skip): ")
+	reader := bufio.NewReader(os.Stdin)
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, fmt.Errorf("failed to read input: %w", err)
+	}
+
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return []string{}, nil
+	}
+
+	return parseTagsInput(input), nil
+}
+
+// parseTagsInput parses a comma-separated input string into tags
+func parseTagsInput(input string) []string {
+	tags := make([]string, 0)
+	for _, tag := range strings.Split(input, ",") {
+		tag = strings.TrimSpace(tag)
+		if tag != "" {
+			tags = append(tags, tag)
+		}
+	}
+	return tags
+}
+
 func parseNoteLine(line string) noteEntry {
 	line = strings.TrimSpace(line)
 	if line == "" {
@@ -500,7 +814,7 @@ func createNotesInteractive(ctx context.Context) error {
 			continue
 		}
 
-		tags, err := promptForTags(reader)
+		tags, err := promptForTagsWithAutocomplete(notesPath, vaultFile)
 		if err != nil {
 			fmt.Printf("Failed to read tags: %v\n", err)
 		}
@@ -874,24 +1188,21 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 			}
 		case "t", "tags":
 			fmt.Printf("Current tags: %s\n", strings.Join(entry.tags, ", "))
-			fmt.Print("Enter new tags (comma-separated, or Enter to keep current): ")
-			tagsInput, err := reader.ReadString('\n')
+			fmt.Print("Enter new tags (Tab for autocomplete, or Enter to keep current): ")
+			
+			// Use autocomplete prompt
+			newTags, err := promptForTagsWithAutocomplete(notesPath, vaultFile)
 			if err != nil {
 				fmt.Printf("Failed to read tags: %v\n", err)
 			} else {
-				tagsInput = strings.TrimSpace(tagsInput)
-				var newTags []string
-				if tagsInput == "" {
-					newTags = entry.tags
+				// If user just pressed Enter without typing anything, keep current tags
+				var finalTags []string
+				if len(newTags) == 0 {
+					finalTags = entry.tags
 				} else {
-					for _, tag := range strings.Split(tagsInput, ",") {
-						tag = strings.TrimSpace(tag)
-						if tag != "" {
-							newTags = append(newTags, tag)
-						}
-					}
+					finalTags = newTags
 				}
-				if err := updateNoteTags(notesPath, vaultFile, entry.filename, newTags); err != nil {
+				if err := updateNoteTags(notesPath, vaultFile, entry.filename, finalTags); err != nil {
 					fmt.Printf("Failed to update tags: %v\n", err)
 				} else {
 					fmt.Println("\033[32mTags updated.\033[0m")
