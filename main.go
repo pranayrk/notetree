@@ -183,12 +183,12 @@ func renameNoteFile(ctx context.Context, reader *bufio.Reader, oldFilename strin
 
 	newFilename = strings.TrimSpace(newFilename)
 	if newFilename == "" {
-		fmt.Println("Cancelled.")
+		fmt.Println("\033[33mCancelled.\033[0m")
 		return nil
 	}
 
 	if newFilename == oldFilename {
-		fmt.Println("Filename unchanged.")
+		fmt.Println("\033[33mFilename unchanged.\033[0m")
 		return nil
 	}
 
@@ -200,7 +200,7 @@ func renameNoteFile(ctx context.Context, reader *bufio.Reader, oldFilename strin
 	newFilePath := filepath.Join(notesDir, newFilename)
 
 	if _, err := os.Stat(newFilePath); err == nil {
-		fmt.Printf("File already exists: %s\n", newFilename)
+		fmt.Printf("\033[31mFile already exists: %s\033[0m\n", newFilename)
 		return nil
 	}
 
@@ -223,7 +223,7 @@ func renameNoteFile(ctx context.Context, reader *bufio.Reader, oldFilename strin
 		return err
 	}
 
-	fmt.Printf("Renamed '%s' to '%s'.\n", oldFilename, newFilename)
+	fmt.Printf("Renamed \033[32m'%s'\033[0m to \033[32m'%s'\033[0m.\n", oldFilename, newFilename)
 
 	if err := collectNotesByTag(ctx); err != nil {
 		return fmt.Errorf("error organizing notes by tag: %w", err)
@@ -440,7 +440,7 @@ func createNotesInteractive(ctx context.Context) error {
 		}
 
 		if strings.ToLower(strings.TrimSpace(input)) == "q" {
-			fmt.Println("Exiting note add mode.")
+			fmt.Println("\033[33mExiting note add mode.\033[0m")
 			break
 		}
 
@@ -462,7 +462,7 @@ func createNotesInteractive(ctx context.Context) error {
 		filePath := filepath.Join(notesDir, filename)
 
 		if _, err := os.Stat(filePath); err == nil {
-			fmt.Printf("File already exists: %s. Please choose a different name.\n", filename)
+			fmt.Printf("\033[31mFile already exists: %s\033[0m. Please choose a different name.\n", filename)
 			continue
 		}
 
@@ -471,7 +471,7 @@ func createNotesInteractive(ctx context.Context) error {
 			continue
 		}
 
-		fmt.Printf("Created note: %s\n\n\n", filepath.Base(filePath))
+		fmt.Printf("Created note: \033[32m%s\033[0m\n\n\n", filepath.Base(filePath))
 
 		editorErr := openEditor(filePath)
 		if editorErr != nil {
@@ -495,7 +495,7 @@ func createNotesInteractive(ctx context.Context) error {
 
 		if info.Size() == 0 {
 			os.Remove(filePath)
-			fmt.Println("Note is empty, deleted.")
+			fmt.Println("\033[32mNote is empty, deleted.\033[0m")
 			fmt.Println()
 			continue
 		}
@@ -546,7 +546,7 @@ func addImages(ctx context.Context) error {
 		}
 
 		if strings.ToLower(input) == "q" {
-			fmt.Println("Exiting image add mode.")
+			fmt.Println("\033[33mExiting image add mode.\033[0m")
 			break
 		}
 
@@ -569,7 +569,7 @@ func addImages(ctx context.Context) error {
 			fmt.Printf("Failed to move image: %v\n", err)
 			continue
 		}
-		fmt.Printf("Added image: %s\n", destPath)
+		fmt.Printf("Added image: \033[32m%s\033[0m\n", destPath)
 	}
 	return nil
 }
@@ -607,19 +607,19 @@ func moveNoteToVault(ctx context.Context, reader *bufio.Reader, filename string)
 
 	input = strings.TrimSpace(input)
 	if input == "" {
-		fmt.Println("Cancelled.")
+		fmt.Println("\033[33mCancelled.\033[0m")
 		return nil
 	}
 
 	var idx int
 	if _, err := fmt.Sscanf(input, "%d", &idx); err != nil || idx < 1 || idx > len(vaultFiles) {
-		fmt.Println("Invalid option.")
+		fmt.Println("\033[31mInvalid option.\033[0m")
 		return nil
 	}
 
 	targetVaultFile := vaultFiles[idx-1]
 	if targetVaultFile == currentVaultFile {
-		fmt.Println("Note is already in this vault file.")
+		fmt.Println("\033[33mNote is already in this vault file.\033[0m")
 		return nil
 	}
 
@@ -660,7 +660,7 @@ func moveNoteToVault(ctx context.Context, reader *bufio.Reader, filename string)
 		return err
 	}
 
-	fmt.Printf("Moved '%s' from '%s' to '%s'.\n", filename, currentVaultFile, targetVaultFile)
+	fmt.Printf("Moved \033[32m'%s'\033[0m from \033[32m'%s'\033[0m to \033[32m'%s'\033[0m.\n", filename, currentVaultFile, targetVaultFile)
 
 	// Reorganize current vault file by tag
 	if err := collectNotesByTag(ctx); err != nil {
@@ -702,7 +702,7 @@ func archiveNote(ctx context.Context, reader *bufio.Reader, filename string) err
 
 	// Don't allow archiving from archive vault itself
 	if currentVaultFile == archiveVault {
-		fmt.Println("Note is already in the archive vault.")
+		fmt.Println("\033[33mNote is already in the archive vault.\033[0m")
 		return nil
 	}
 
@@ -743,7 +743,7 @@ func archiveNote(ctx context.Context, reader *bufio.Reader, filename string) err
 		return err
 	}
 
-	fmt.Printf("Archived '%s' to '%s'.\n", filename, archiveVault)
+	fmt.Printf("Archived \033[32m'%s'\033[0m to \033[32m'%s'\033[0m.\n", filename, archiveVault)
 
 	// Reorganize current vault file by tag
 	if err := collectNotesByTag(ctx); err != nil {
@@ -774,11 +774,11 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 
 	if len(filteredEntries) == 0 {
 		if untaggedOnly {
-			fmt.Println("No untagged notes found.")
+			fmt.Println("\033[33mNo untagged notes found.\033[0m")
 		} else if filterTag != "" {
-			fmt.Printf("No notes found with tag: %s\n", filterTag)
+			fmt.Printf("\033[33mNo notes found with tag: %s\033[0m\n", filterTag)
 		} else {
-			fmt.Println("No notes found.")
+			fmt.Println("\033[33mNo notes found.\033[0m")
 		}
 		return nil
 	}
@@ -847,7 +847,7 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 			if err := openEditor(filePath); err != nil {
 				fmt.Printf("Failed to open editor: %v\n", err)
 			} else {
-				fmt.Println("Note edited.")
+				fmt.Println("\033[32mNote edited.\033[0m")
 				// Display preview of the edited note
 				if err := previewNote(ctx, entry.filename); err != nil {
 					fmt.Printf("Failed to display preview: %v\n", err)
@@ -894,7 +894,7 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 				if err := updateNoteTags(notesPath, vaultFile, entry.filename, newTags); err != nil {
 					fmt.Printf("Failed to update tags: %v\n", err)
 				} else {
-					fmt.Println("Tags updated.")
+					fmt.Println("\033[32mTags updated.\033[0m")
 					if err := collectNotesByTag(ctx); err != nil {
 						fmt.Printf("Error organizing notes by tag: %v\n", err)
 					}
@@ -914,7 +914,7 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 						}
 					}
 					if !found {
-						fmt.Println("\nNote not found in filtered list.")
+						fmt.Println("\033[31mNote not found in filtered list.\033[0m")
 						return nil
 					}
 				}
@@ -928,11 +928,11 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 				if err := os.Remove(filePath); err != nil {
 					fmt.Printf("Failed to delete file: %v\n", err)
 				} else {
-					fmt.Printf("Deleted file: %s\n", filePath)
+					fmt.Printf("Deleted file: \033[32m%s\033[0m\n", filePath)
 					if err := removeNoteFromVault(notesPath, vaultFile, entry.filename); err != nil {
 						fmt.Printf("Failed to remove from vault: %v\n", err)
 					} else {
-						fmt.Println("Removed from vault.")
+						fmt.Println("\033[32mRemoved from vault.\033[0m")
 						if err := collectNotesByTag(ctx); err != nil {
 							fmt.Printf("Error organizing notes by tag: %v\n", err)
 						}
@@ -1032,24 +1032,24 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 		case "n", "next":
 			i++
 			if i >= len(filteredEntries) {
-				fmt.Println("\nEnd of notes.")
+				fmt.Println("\033[33mEnd of notes.\033[0m")
 				return nil
 			}
 		case "p", "prev", "previous":
 			if i > 0 {
 				i--
 			} else {
-				fmt.Println("Already at first note.")
+				fmt.Println("\033[33mAlready at first note.\033[0m")
 			}
 		case "q", "quit", "exit":
-			fmt.Println("Exiting browse mode.")
+			fmt.Println("\033[33mExiting browse mode.\033[0m")
 			return nil
 		}
 
 		fmt.Println()
 	}
 
-	fmt.Println("\nEnd of notes.")
+	fmt.Println("\033[33mEnd of notes.\033[0m")
 	return nil
 }
 
@@ -1176,7 +1176,7 @@ func manageVaultFiles(ctx context.Context, reader *bufio.Reader) (string, error)
 			if err := openEditor(vaultFilePath); err != nil {
 				fmt.Printf("Failed to open editor: %v\n", err)
 			} else {
-				fmt.Println("Vault file opened in editor.")
+				fmt.Println("\033[32mVault file opened in editor.\033[0m")
 			}
 		case "n":
 			fmt.Print("Enter new vault file name: ")
@@ -1186,7 +1186,7 @@ func manageVaultFiles(ctx context.Context, reader *bufio.Reader) (string, error)
 			}
 			newName = strings.TrimSpace(newName)
 			if newName == "" {
-				fmt.Println("Vault file name cannot be empty.")
+				fmt.Println("\033[31mVault file name cannot be empty.\033[0m")
 				continue
 			}
 			if !strings.HasSuffix(newName, ".vault") {
@@ -1205,12 +1205,12 @@ func manageVaultFiles(ctx context.Context, reader *bufio.Reader) (string, error)
 				fmt.Printf("Failed to set vault file: %v\n", err)
 				continue
 			}
-			fmt.Printf("Created and switched to vault file: %s\n", newName)
+			fmt.Printf("Created and switched to vault file: \033[32m%s\033[0m\n", newName)
 			return newName, nil
 		default:
 			var idx int
 			if _, err := fmt.Sscanf(input, "%d", &idx); err != nil || idx < 1 || idx > len(vaultFiles) {
-				fmt.Println("Invalid option.")
+				fmt.Println("\033[31mInvalid option.\033[0m")
 				continue
 			}
 
@@ -1219,7 +1219,7 @@ func manageVaultFiles(ctx context.Context, reader *bufio.Reader) (string, error)
 				fmt.Printf("Failed to set vault file: %v\n", err)
 				continue
 			}
-			fmt.Printf("Switched to vault file: %s\n", selectedVaultFile)
+			fmt.Printf("Switched to vault file: \033[32m%s\033[0m\n", selectedVaultFile)
 			return selectedVaultFile, nil
 		}
 	}
@@ -1262,7 +1262,7 @@ func manageTags(ctx context.Context, reader *bufio.Reader) error {
 		fmt.Println("\nTag Management")
 		fmt.Println("==============")
 		if len(tagOrder) == 0 {
-			fmt.Println("No tags found.")
+			fmt.Println("\033[33mNo tags found.\033[0m")
 		} else {
 			fmt.Println("\nExisting tags:")
 			for _, tag := range tagOrder {
@@ -1285,7 +1285,7 @@ func manageTags(ctx context.Context, reader *bufio.Reader) error {
 
 		switch strings.ToLower(strings.TrimSpace(input)) {
 		case "q", "quit":
-			fmt.Println("Exiting tag management.")
+			fmt.Println("\033[33mExiting tag management.\033[0m")
 			return nil
 		case "m", "move":
 			if err := moveNotesByTag(ctx, reader); err != nil {
@@ -1304,7 +1304,7 @@ func manageTags(ctx context.Context, reader *bufio.Reader) error {
 				fmt.Printf("Error deleting notes: %v\n", err)
 			}
 		default:
-			fmt.Println("Invalid option.")
+			fmt.Println("\033[31mInvalid option.\033[0m")
 		}
 	}
 }
@@ -1325,7 +1325,7 @@ func moveNotesByTag(ctx context.Context, reader *bufio.Reader) error {
 	}
 	tagInput = strings.TrimSpace(tagInput)
 	if tagInput == "" {
-		fmt.Println("Tag cannot be empty.")
+		fmt.Println("\033[31mTag cannot be empty.\033[0m")
 		return nil
 	}
 
@@ -1353,19 +1353,19 @@ func moveNotesByTag(ctx context.Context, reader *bufio.Reader) error {
 
 	input = strings.TrimSpace(input)
 	if input == "" {
-		fmt.Println("Cancelled.")
+		fmt.Println("\033[33mCancelled.\033[0m")
 		return nil
 	}
 
 	var idx int
 	if _, err := fmt.Sscanf(input, "%d", &idx); err != nil || idx < 1 || idx > len(vaultFiles) {
-		fmt.Println("Invalid option.")
+		fmt.Println("\033[31mInvalid option.\033[0m")
 		return nil
 	}
 
 	targetVaultFile := vaultFiles[idx-1]
 	if targetVaultFile == currentVaultFile {
-		fmt.Println("Note is already in this vault file.")
+		fmt.Println("\033[33mNote is already in this vault file.\033[0m")
 		return nil
 	}
 
@@ -1406,7 +1406,7 @@ func moveNotesByTag(ctx context.Context, reader *bufio.Reader) error {
 	}
 
 	if strings.ToLower(strings.TrimSpace(confirm)) != "y" {
-		fmt.Println("Cancelled.")
+		fmt.Println("\033[33mCancelled.\033[0m")
 		return nil
 	}
 
@@ -1425,7 +1425,7 @@ func moveNotesByTag(ctx context.Context, reader *bufio.Reader) error {
 		return err
 	}
 
-	fmt.Printf("Moved %d note(s) with tag '%s' from '%s' to '%s'.\n", len(notesToMove), tagInput, currentVaultFile, targetVaultFile)
+	fmt.Printf("Moved \033[32m%d note(s)\033[0m with tag \033[32m'%s'\033[0m from \033[32m'%s'\033[0m to \033[32m'%s'\033[0m.\n", len(notesToMove), tagInput, currentVaultFile, targetVaultFile)
 
 	// Reorganize current vault file by tag
 	if err := collectNotesByTag(ctx); err != nil {
@@ -1463,7 +1463,7 @@ func archiveNotesByTag(ctx context.Context, reader *bufio.Reader) error {
 	}
 	tagInput = strings.TrimSpace(tagInput)
 	if tagInput == "" {
-		fmt.Println("Tag cannot be empty.")
+		fmt.Println("\033[31mTag cannot be empty.\033[0m")
 		return nil
 	}
 
@@ -1509,7 +1509,7 @@ func archiveNotesByTag(ctx context.Context, reader *bufio.Reader) error {
 	}
 
 	if strings.ToLower(strings.TrimSpace(confirm)) != "y" {
-		fmt.Println("Cancelled.")
+		fmt.Println("\033[33mCancelled.\033[0m")
 		return nil
 	}
 
@@ -1528,7 +1528,7 @@ func archiveNotesByTag(ctx context.Context, reader *bufio.Reader) error {
 		return err
 	}
 
-	fmt.Printf("Archived %d note(s) with tag '%s' to '%s'.\n", len(notesToArchive), tagInput, archiveVault)
+	fmt.Printf("Archived \033[32m%d note(s)\033[0m with tag \033[32m'%s'\033[0m to \033[32m'%s'\033[0m.\n", len(notesToArchive), tagInput, archiveVault)
 
 	// Reorganize current vault file by tag
 	if err := collectNotesByTag(ctx); err != nil {
@@ -1554,7 +1554,7 @@ func renameTag(ctx context.Context, reader *bufio.Reader) error {
 	}
 	oldTag = strings.TrimSpace(oldTag)
 	if oldTag == "" {
-		fmt.Println("Tag cannot be empty.")
+		fmt.Println("\033[31mTag cannot be empty.\033[0m")
 		return nil
 	}
 
@@ -1565,12 +1565,12 @@ func renameTag(ctx context.Context, reader *bufio.Reader) error {
 	}
 	newTag = strings.TrimSpace(newTag)
 	if newTag == "" {
-		fmt.Println("New tag cannot be empty.")
+		fmt.Println("\033[31mNew tag cannot be empty.\033[0m")
 		return nil
 	}
 
 	if oldTag == newTag {
-		fmt.Println("Tags are the same.")
+		fmt.Println("\033[33mTags are the same.\033[0m")
 		return nil
 	}
 
@@ -1608,7 +1608,7 @@ func renameTag(ctx context.Context, reader *bufio.Reader) error {
 		return err
 	}
 
-	fmt.Printf("Renamed tag '%s' to '%s' in %d occurrence(s).\n", oldTag, newTag, affectedCount)
+	fmt.Printf("Renamed tag \033[32m'%s'\033[0m to \033[32m'%s'\033[0m in \033[32m%d occurrence(s)\033[0m.\n", oldTag, newTag, affectedCount)
 
 	if err := collectNotesByTag(ctx); err != nil {
 		fmt.Printf("Error organizing notes by tag: %v\n", err)
@@ -1634,7 +1634,7 @@ func deleteNotesByTag(ctx context.Context, reader *bufio.Reader) error {
 	}
 	tagInput = strings.TrimSpace(tagInput)
 	if tagInput == "" {
-		fmt.Println("Tag cannot be empty.")
+		fmt.Println("\033[31mTag cannot be empty.\033[0m")
 		return nil
 	}
 
@@ -1679,7 +1679,7 @@ func deleteNotesByTag(ctx context.Context, reader *bufio.Reader) error {
 	}
 
 	if strings.ToLower(strings.TrimSpace(confirm)) != "y" {
-		fmt.Println("Cancelled.")
+		fmt.Println("\033[33mCancelled.\033[0m")
 		return nil
 	}
 
@@ -1695,7 +1695,7 @@ func deleteNotesByTag(ctx context.Context, reader *bufio.Reader) error {
 		return err
 	}
 
-	fmt.Printf("Deleted %d note(s) with tag '%s'.\n", len(notesToDelete), tagInput)
+	fmt.Printf("Deleted \033[32m%d note(s)\033[0m with tag \033[32m'%s'\033[0m.\n", len(notesToDelete), tagInput)
 
 	if err := collectNotesByTag(ctx); err != nil {
 		fmt.Printf("Error organizing notes by tag: %v\n", err)
@@ -1879,7 +1879,7 @@ func exportNotes(ctx context.Context, filterTag string) error {
 		os.Remove(tempPDF)
 	}
 
-	fmt.Printf("Exported PDF to: %s\n", outputPath)
+	fmt.Printf("Exported PDF to: \033[32m%s\033[0m\n", outputPath)
 	return nil
 }
 
@@ -1974,7 +1974,7 @@ func mainMenu(ctx context.Context) error {
 				fmt.Printf("Error managing tags: %v\n", err)
 			}
 		case "q":
-			fmt.Println("Goodbye!")
+			fmt.Println("\033[32mGoodbye!\033[0m")
 			return nil
 		default:
 			fmt.Println("Invalid option. Please try again.")
