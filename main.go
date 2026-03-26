@@ -1372,6 +1372,56 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 	return nil
 }
 
+// editNoteInteractive edits a single note by filename
+func editNoteInteractive(ctx context.Context, filename string) error {
+	notesPath := getNotesPath(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
+	}
+
+	notesDir := filepath.Join(notesPath, "notes")
+	vaultFile := getVaultFile(ctx)
+
+	// Check if the note exists in the current vault file
+	entries, err := loadNotes(notesPath, vaultFile)
+	if err != nil {
+		return err
+	}
+
+	found := false
+	for _, entry := range entries {
+		if entry.filename == filename {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("note '%s' not found in current vault file '%s'", filename, vaultFile)
+	}
+
+	filePath := filepath.Join(notesDir, filename)
+
+	// Check if the note file exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return fmt.Errorf("note file does not exist: %s", filePath)
+	}
+
+	// Open editor
+	if err := openEditor(filePath); err != nil {
+		return fmt.Errorf("failed to open editor: %w", err)
+	}
+
+	fmt.Println("\033[32mNote edited.\033[0m")
+
+	// Display preview of the edited note
+	if err := previewNote(ctx, filename); err != nil {
+		fmt.Printf("Failed to display preview: %v\n", err)
+	}
+
+	return nil
+}
+
 // previewNote displays a preview of a note's content in the CLI
 func previewNote(ctx context.Context, filename string) error {
 	notesPath := getNotesPath(ctx)
@@ -2494,6 +2544,20 @@ func main() {
 					cmd.Stdout = os.Stdout
 					cmd.Stderr = os.Stderr
 					return cmd.Run()
+				},
+			},
+			{
+				Name:        "edit",
+				Aliases:     []string{"e"},
+				Usage:       "Edit a note by filename",
+				ArgsUsage:   "<filename>",
+				Description: "Edit a specific note by its filename. The note must exist in the current vault file.",
+				Action: func(ctx context.Context, c *cli.Command) error {
+					filename := c.Args().First()
+					if filename == "" {
+						return fmt.Errorf("filename required, usage: notetree edit <filename>")
+					}
+					return editNoteInteractive(ctx, filename)
 				},
 			},
 			{
