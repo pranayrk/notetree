@@ -1448,6 +1448,56 @@ func filterEntries(entries []noteEntry, filterTag string, untaggedOnly bool) []n
 	return filtered
 }
 
+// renameVaultFile renames the current vault file to a new name
+func renameVaultFile(ctx context.Context, reader *bufio.Reader) (string, error) {
+	notesPath := getNotesPath(ctx)
+	if notesPath == "" {
+		return "", fmt.Errorf("notes path not configured")
+	}
+
+	currentVaultFile := getVaultFile(ctx)
+
+	fmt.Print("Enter new vault file name (or Enter to cancel): ")
+	newName, err := reader.ReadString('\n')
+	if err != nil {
+		return "", fmt.Errorf("failed to read input: %w", err)
+	}
+
+	newName = strings.TrimSpace(newName)
+	if newName == "" {
+		fmt.Println("\033[33mCancelled.\033[0m")
+		return currentVaultFile, nil
+	}
+
+	if newName == currentVaultFile {
+		fmt.Println("\033[33mVault file name unchanged.\033[0m")
+		return currentVaultFile, nil
+	}
+
+	if !strings.HasSuffix(newName, ".vault") {
+		newName += ".vault"
+	}
+
+	oldVaultFilePath := filepath.Join(notesPath, currentVaultFile)
+	newVaultFilePath := filepath.Join(notesPath, newName)
+
+	if _, err := os.Stat(newVaultFilePath); err == nil {
+		fmt.Printf("\033[31mVault file already exists: %s\033[0m\n", newName)
+		return currentVaultFile, nil
+	}
+
+	if err := os.Rename(oldVaultFilePath, newVaultFilePath); err != nil {
+		return "", fmt.Errorf("failed to rename vault file: %w", err)
+	}
+
+	if err := config.SetVaultFile(newName); err != nil {
+		return "", fmt.Errorf("failed to update config: %w", err)
+	}
+
+	fmt.Printf("Renamed vault file from \033[32m'%s'\033[0m to \033[32m'%s'\033[0m.\n", currentVaultFile, newName)
+	return newName, nil
+}
+
 func manageVaultFiles(ctx context.Context, reader *bufio.Reader) (string, error) {
 	notesPath := getNotesPath(ctx)
 	if notesPath == "" {
@@ -1478,6 +1528,7 @@ func manageVaultFiles(ctx context.Context, reader *bufio.Reader) (string, error)
 		fmt.Println()
 		fmt.Println("  (N)ew vault file")
 		fmt.Println("  (O)pen vault file in editor")
+		fmt.Println("  (R)ename vault file")
 		fmt.Println("  (Q)uit")
 		fmt.Println()
 
@@ -1497,6 +1548,8 @@ func manageVaultFiles(ctx context.Context, reader *bufio.Reader) (string, error)
 			} else {
 				fmt.Println("\033[32mVault file opened in editor.\033[0m")
 			}
+		case "r":
+			return renameVaultFile(ctx, reader)
 		case "n":
 			fmt.Print("Enter new vault file name: ")
 			newName, err := reader.ReadString('\n')
