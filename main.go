@@ -1189,7 +1189,7 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 		case "t", "tags":
 			fmt.Printf("Current tags: %s\n", strings.Join(entry.tags, ", "))
 			fmt.Print("Enter new tags (Tab for autocomplete, or Enter to keep current): ")
-			
+
 			// Use autocomplete prompt
 			newTags, err := promptForTagsWithAutocomplete(notesPath, vaultFile)
 			if err != nil {
@@ -1225,8 +1225,16 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 						}
 					}
 					if !found {
-						fmt.Println("\033[31mNote not found in filtered list.\033[0m")
-						return nil
+						// Note no longer matches filter (e.g., was untagged, now has tags)
+						fmt.Println("\033[33mNote no longer matches current filter.\033[0m")
+						if len(filteredEntries) == 0 {
+							fmt.Println("\033[33mNo more notes match the filter.\033[0m")
+							return nil
+						}
+						// Move to next note at same position, or last if at end
+						if i >= len(filteredEntries) {
+							i = len(filteredEntries) - 1
+						}
 					}
 				}
 			}
