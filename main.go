@@ -511,7 +511,11 @@ func createNotesInteractive(ctx context.Context) error {
 		if err := collectNotesByTag(ctx); err != nil {
 			fmt.Printf("Error organizing notes by tag: %v\n", err)
 		}
-		fmt.Println()
+
+		// Display preview of the created note
+		if err := previewNote(ctx, filename); err != nil {
+			fmt.Printf("Failed to display preview: %v\n", err)
+		}
 	}
 	return nil
 }
@@ -844,6 +848,10 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 				fmt.Printf("Failed to open editor: %v\n", err)
 			} else {
 				fmt.Println("Note edited.")
+				// Display preview of the edited note
+				if err := previewNote(ctx, entry.filename); err != nil {
+					fmt.Printf("Failed to display preview: %v\n", err)
+				}
 			}
 		case "r", "rename":
 			if err := renameNoteFile(ctx, reader, entry.filename); err != nil {
@@ -1042,6 +1050,59 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 	}
 
 	fmt.Println("\nEnd of notes.")
+	return nil
+}
+
+// previewNote displays a preview of a note's content in the CLI
+func previewNote(ctx context.Context, filename string) error {
+	notesPath := getNotesPath(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
+	}
+
+	notesDir := filepath.Join(notesPath, "notes")
+	vaultFile := getVaultFile(ctx)
+
+	// Load entries to get tags for this note
+	entries, err := loadNotes(notesPath, vaultFile)
+	if err != nil {
+		return err
+	}
+
+	var tags []string
+	for _, entry := range entries {
+		if entry.filename == filename {
+			tags = entry.tags
+			break
+		}
+	}
+
+	filePath := filepath.Join(notesDir, filename)
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to read note: %w", err)
+	}
+
+	fmt.Println()
+	fmt.Printf("\033[1mPreview: %s\033[0m\n", filename)
+	if len(tags) > 0 {
+		fmt.Printf("Tags: \033[36m%s\033[0m\n", strings.Join(tags, ", "))
+	} else {
+		fmt.Println("Tags: \033[33m(none)\033[0m")
+	}
+	fmt.Println(strings.Repeat("-", 50))
+
+	contentStr := string(content)
+	if len(contentStr) > 2000 {
+		fmt.Println(contentStr[:2000])
+		fmt.Println("\n... (content truncated)")
+	} else if len(contentStr) == 0 {
+		fmt.Println("\033[33m(Empty note)\033[0m")
+	} else {
+		fmt.Println(contentStr)
+	}
+	fmt.Println()
+
 	return nil
 }
 
