@@ -1383,7 +1383,7 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 	return nil
 }
 
-// editNoteInteractive edits a single note by filename
+// editNoteInteractive displays a menu for a single note by filename
 func editNoteInteractive(ctx context.Context, filename string) error {
 	notesPath := getNotesPath(ctx)
 	if notesPath == "" {
@@ -1392,6 +1392,7 @@ func editNoteInteractive(ctx context.Context, filename string) error {
 
 	notesDir := filepath.Join(notesPath, "notes")
 	vaultFile := getVaultFile(ctx)
+	reader := bufio.NewReader(os.Stdin)
 
 	// Check if the note exists in the current vault file
 	entries, err := loadNotes(notesPath, vaultFile)
@@ -1399,9 +1400,11 @@ func editNoteInteractive(ctx context.Context, filename string) error {
 		return err
 	}
 
+	var entry noteEntry
 	found := false
-	for _, entry := range entries {
-		if entry.filename == filename {
+	for _, e := range entries {
+		if e.filename == filename {
+			entry = e
 			found = true
 			break
 		}
@@ -1418,19 +1421,208 @@ func editNoteInteractive(ctx context.Context, filename string) error {
 		return fmt.Errorf("note file does not exist: %s", filePath)
 	}
 
-	// Open editor
-	if err := openEditor(filePath); err != nil {
-		return fmt.Errorf("failed to open editor: %w", err)
+	fmt.Printf("\n\033[1m%s\033[0m\n", entry.filename)
+	if len(entry.tags) > 0 {
+		fmt.Printf("Tags: \033[36m%s\033[0m\n", strings.Join(entry.tags, ", "))
+	} else {
+		fmt.Println("Tags: \033[33m(none)\033[0m")
+	}
+	fmt.Println(strings.Repeat("-", 50))
+
+	// Read and display note content
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("error reading file: %w", err)
 	}
 
-	fmt.Println("\033[32mNote edited.\033[0m")
-
-	// Display preview of the edited note
-	if err := previewNote(ctx, filename); err != nil {
-		fmt.Printf("Failed to display preview: %v\n", err)
+	// Display content (truncate if too long)
+	contentStr := string(content)
+	if len(contentStr) > 2000 {
+		fmt.Println(contentStr[:2000])
+		fmt.Println("\n... (content truncated, use (V) to view full content)")
+	} else {
+		fmt.Println(contentStr)
 	}
+	fmt.Println()
 
-	return nil
+	// Show action menu
+	fmt.Println("Actions:")
+	fmt.Println("  (E)dit note")
+	fmt.Println("  (R)ename file")
+	fmt.Println("  (T)ags update")
+	fmt.Println("  (D)elete note")
+	fmt.Println("  (M)ove to another vault file")
+	fmt.Println("  (A)rchive note")
+	fmt.Println("  (V)iew full content in markdown reader")
+	fmt.Println("  (Q)uit")
+	fmt.Println()
+
+	for {
+		fmt.Print("Select action: ")
+		action, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("failed to read action: %w", err)
+		}
+		action = strings.ToLower(strings.TrimSpace(action))
+
+		switch action {
+		case "e", "edit":
+			if err := openEditor(filePath); err != nil {
+				fmt.Printf("Failed to open editor: %v\n", err)
+			} else {
+				fmt.Println("\033[32mNote edited.\033[0m")
+				// Display preview of the edited note
+				if err := previewNote(ctx, entry.filename); err != nil {
+					fmt.Printf("Failed to display preview: %v\n", err)
+				}
+			}
+		case "r", "rename":
+			if err := renameNoteFile(ctx, reader, entry.filename); err != nil {
+				fmt.Printf("Failed to rename file: %v\n", err)
+			} else {
+				// Reload entries
+				if entries, err = loadNotes(notesPath, vaultFile); err != nil {
+					fmt.Printf("Failed to reload notes: %v\n", err)
+					return err
+				}
+				// Find the entry in the reloaded list
+				found = false
+				for _, e := range entries {
+					if e.filename == filename {
+						entry = e
+						found = true
+						break
+					}
+				}
+				if !found {
+					fmt.Println("\033[33mNote renamed successfully. Exiting.\033[0m")
+					return nil
+				}
+			}
+		case "t", "tags":
+			fmt.Printf("Current tags: %s\n", strings.Join(entry.tags, ", "))
+			fmt.Print("Enter new tags (Tab for autocomplete, or Enter to keep current): ")
+
+			// Use autocomplete prompt
+			newTags, err := promptForTagsWithAutocomplete(notesPath, vaultFile)
+			if err != nil {
+				fmt.Printf("Failed to read tags: %v\n", err)
+			} else {
+				// If user just pressed Enter without typing anything, keep current tags
+				var finalTags []string
+				if len(newTags) == 0 {
+					finalTags = entry.tags
+				} else {
+					finalTags = newTags
+				}
+				if err := updateNoteTags(notesPath, vaultFile, entry.filename, finalTags); err != nil {
+					fmt.Printf("Failed to update tags: %v\n", err)
+				} else {
+					fmt.Println("\033[32mTags updated.\033[0m")
+					if err := collectNotesByTag(ctx); err != nil {
+						fmt.Printf("Error organizing notes by tag: %v\n", err)
+					}
+					// Reload entries to reflect changes
+					if entries, err = loadNotes(notesPath, vaultFile); err != nil {
+						fmt.Printf("Failed to reload notes: %v\n", err)
+						return err
+					}
+					// Find the same entry in the reloaded list
+					found = false
+					for _, e := range entries {
+						if e.filename == entry.filename {
+							entry = e
+							found = true
+							break
+						}
+					}
+					if !found {
+						fmt.Println("\033[33mNote not found after reload. Exiting.\033[0m")
+						return nil
+					}
+				}
+			}
+		case "d", "delete":
+			fmt.Printf("Are you sure you want to delete '%s'? (y/n): ", entry.filename)
+			confirm, err := reader.ReadString('\n')
+			if err != nil {
+				fmt.Printf("Failed to read confirmation: %v\n", err)
+			} else if strings.ToLower(strings.TrimSpace(confirm)) == "y" {
+				if err := os.Remove(filePath); err != nil {
+					fmt.Printf("Failed to delete file: %v\n", err)
+				} else {
+					fmt.Printf("Deleted file: \033[32m%s\033[0m\n", filePath)
+					if err := removeNoteFromVault(notesPath, vaultFile, entry.filename); err != nil {
+						fmt.Printf("Failed to remove from vault: %v\n", err)
+					} else {
+						fmt.Println("\033[32mRemoved from vault.\033[0m")
+						if err := collectNotesByTag(ctx); err != nil {
+							fmt.Printf("Error organizing notes by tag: %v\n", err)
+						}
+					}
+					fmt.Println("\033[32mNote deleted. Exiting.\033[0m")
+					return nil
+				}
+			}
+		case "m", "move":
+			if err := moveNoteToVault(ctx, reader, entry.filename); err != nil {
+				fmt.Printf("Failed to move note: %v\n", err)
+			} else {
+				if err := collectNotesByTag(ctx); err != nil {
+					fmt.Printf("Error organizing notes by tag: %v\n", err)
+				}
+				fmt.Println("\033[33mNote moved to another vault file. Exiting.\033[0m")
+				return nil
+			}
+		case "a", "archive":
+			if err := archiveNote(ctx, reader, entry.filename); err != nil {
+				fmt.Printf("Failed to archive note: %v\n", err)
+			} else {
+				fmt.Println("\033[33mNote archived. Exiting.\033[0m")
+				return nil
+			}
+		case "v", "view":
+			markdownReader, err := config.GetMarkdownReader()
+			if err != nil {
+				fmt.Printf("Failed to get markdown reader: %v\n", err)
+			} else {
+				// Copy file to vault file directory so relative image paths work
+				vaultDir := notesPath
+				tmpFile, err := os.CreateTemp(vaultDir, "view_*.md")
+				if err != nil {
+					fmt.Printf("Failed to create temporary file: %v\n", err)
+				} else {
+					tmpPath := tmpFile.Name()
+					content, readErr := os.ReadFile(filePath)
+					if readErr != nil {
+						fmt.Printf("Failed to read note: %v\n", readErr)
+						tmpFile.Close()
+						os.Remove(tmpPath)
+					} else {
+						if _, writeErr := tmpFile.Write(content); writeErr != nil {
+							fmt.Printf("Failed to write temporary file: %v\n", writeErr)
+						}
+						tmpFile.Close()
+
+						cmd := exec.Command(markdownReader, tmpPath)
+						cmd.Stdin = os.Stdin
+						cmd.Stdout = os.Stdout
+						cmd.Stderr = os.Stderr
+						if err := cmd.Run(); err != nil {
+							fmt.Printf("Failed to open markdown reader: %v\n", err)
+						}
+
+						os.Remove(tmpPath)
+					}
+				}
+			}
+		case "q", "quit", "exit":
+			fmt.Println("\033[33mExiting edit mode.\033[0m")
+			return nil
+		}
+
+		fmt.Println()
+	}
 }
 
 // previewNote displays a preview of a note's content in the CLI
