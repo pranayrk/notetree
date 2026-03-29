@@ -272,7 +272,18 @@ func collectNotesByTag(ctx context.Context) error {
 
 		if !seenTags[tag] {
 			seenTags[tag] = true
-			tagOrder = append(tagOrder, tag)
+
+			matchedTag := false
+			for i := len(tagOrder) - 1; i >= 0; i-- {
+				if(tagMatches(tag, tagOrder[i])) {
+					tagOrder = append(tagOrder[:i + 1], append([]string{tag}, tagOrder[i + 1:]...)...)
+					matchedTag = true
+					break
+				}
+			}
+			if(!matchedTag) {
+				tagOrder = append(tagOrder, tag)
+			}
 		}
 		tagGroups[tag] = append(tagGroups[tag], entry)
 	}
