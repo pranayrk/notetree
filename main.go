@@ -720,6 +720,169 @@ func parseTagsInput(input string) []string {
 	return tags
 }
 
+// promptForSingleTagWithAutocomplete prompts for a single tag with tab completion support
+// Used for filtering notes by tag in browse/read/export operations
+func promptForSingleTagWithAutocomplete(notesPath, vaultFile string, promptText string) (string, error) {
+	// Get all existing tags for autocomplete
+	allTags, err := getAllTags(notesPath, vaultFile)
+	if err != nil {
+		// Fall back to simple prompt if we can't load tags
+		return promptForSingleTagSimple(promptText)
+	}
+
+	// Check if terminal supports raw mode
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return promptForSingleTagSimple(promptText)
+	}
+
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return promptForSingleTagSimple(promptText)
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+	fmt.Print(promptText)
+
+	var input strings.Builder
+	cursorPos := 0
+
+	for {
+		key, err := readKey()
+		if err != nil {
+			return "", err
+		}
+
+		switch key {
+		case '\t': // Tab - autocomplete
+			currentInput := input.String()
+			completions := findTagCompletions(allTags, currentInput)
+			if len(completions) == 1 {
+				// Single match - complete it
+				completion := completions[0]
+				input.Reset()
+				input.WriteString(completion)
+				cursorPos = input.Len()
+				clearLine()
+				fmt.Print(promptText)
+				fmt.Print(input.String())
+			} else if len(completions) > 1 {
+				// Multiple matches - show suggestions
+				showSingleTagCompletions(completions, cursorPos, input.String(), promptText)
+			}
+			// No matches - do nothing
+
+		case '\r', '\n': // Enter - accept
+			fmt.Println()
+			return strings.TrimSpace(input.String()), nil
+
+		case 127, 8: // Backspace
+			if cursorPos > 0 {
+				inputStr := input.String()
+				newStr := inputStr[:cursorPos-1] + inputStr[cursorPos:]
+				input.Reset()
+				input.WriteString(newStr)
+				cursorPos--
+				clearLine()
+				fmt.Print(promptText)
+				fmt.Print(input.String())
+				moveCursorLeft(len(input.String()) - cursorPos)
+			}
+
+		case '×': // Delete key
+			if cursorPos < input.Len() {
+				inputStr := input.String()
+				newStr := inputStr[:cursorPos] + inputStr[cursorPos+1:]
+				input.Reset()
+				input.WriteString(newStr)
+				clearLine()
+				fmt.Print(promptText)
+				fmt.Print(input.String())
+				moveCursorLeft(len(input.String()) - cursorPos)
+			}
+
+		case '←': // Left arrow
+			if cursorPos > 0 {
+				cursorPos--
+				moveCursorLeft(1)
+			}
+
+		case '→': // Right arrow
+			if cursorPos < input.Len() {
+				cursorPos++
+				fmt.Print(string(key))
+			}
+
+		case 3: // Ctrl+C
+			fmt.Println("\n\033[33mCancelled.\033[0m")
+			return "", nil
+
+		default:
+			// Insert character at cursor position
+			if key >= 32 && key < 127 { // Printable ASCII
+				inputStr := input.String()
+				newStr := inputStr[:cursorPos] + string(key) + inputStr[cursorPos:]
+				input.Reset()
+				input.WriteString(newStr)
+				cursorPos++
+				clearLine()
+				fmt.Print(promptText)
+				fmt.Print(input.String())
+				moveCursorLeft(len(input.String()) - cursorPos)
+			}
+		}
+	}
+}
+
+// showSingleTagCompletions displays matching tags for single tag input
+func showSingleTagCompletions(completions []string, cursorPos int, currentInput string, promptText string) {
+	if len(completions) == 0 {
+		return
+	}
+
+	// Limit to first 10 suggestions
+	maxDisplay := 10
+	displayCount := len(completions)
+	if displayCount > maxDisplay {
+		displayCount = maxDisplay
+	}
+
+	// Use \r\n for raw mode compatibility (terminal is in raw mode)
+	fmt.Print("\r\n")
+	fmt.Print("\033[90mSuggestions:\033[0m\r\n")
+	for i := 0; i < displayCount; i++ {
+		fmt.Printf("  \033[36m%s\033[0m\r\n", completions[i])
+	}
+	if len(completions) > maxDisplay {
+		fmt.Printf("  \033[90m... and %d more\033[0m\r\n", len(completions)-maxDisplay)
+	}
+
+	// Move cursor back up to the input line
+	// +1 for the initial newline, +1 for "Suggestions:" line, +displayCount for tags, +1 for "and X more" if shown
+	linesUp := 2 + displayCount
+	if len(completions) > maxDisplay {
+		linesUp++
+	}
+	fmt.Printf("\033[%dA", linesUp)
+
+	// Redraw the input line
+	clearLine()
+	fmt.Print(promptText)
+	fmt.Print(currentInput)
+	moveCursorLeft(len(currentInput) - cursorPos)
+}
+
+// promptForSingleTagSimple is the fallback simple prompt without autocomplete
+func promptForSingleTagSimple(promptText string) (string, error) {
+	fmt.Print(promptText)
+	reader := bufio.NewReader(os.Stdin)
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		return "", fmt.Errorf("failed to read input: %w", err)
+	}
+
+	return strings.TrimSpace(input), nil
+}
+
 func parseNoteLine(line string) noteEntry {
 	line = strings.TrimSpace(line)
 	if line == "" {
@@ -2542,8 +2705,9 @@ func mainMenu(ctx context.Context) error {
 				fmt.Printf("Error organizing notes by tag: %v\n", err)
 			}
 		case "b":
-			fmt.Print("Enter tag to filter (or Enter for all, 'u' for untagged only): ")
-			tagInput, err := reader.ReadString('\n')
+			notesPath := getNotesPath(ctx)
+			vaultFile := getVaultFile(ctx)
+			tagInput, err := promptForSingleTagWithAutocomplete(notesPath, vaultFile, "Enter tag to filter (or Enter for all, 'u' for untagged only): ")
 			if err != nil {
 				fmt.Printf("Error reading tag: %v\n", err)
 			} else {
@@ -2560,8 +2724,9 @@ func mainMenu(ctx context.Context) error {
 				}
 			}
 		case "r":
-			fmt.Print("Enter tag to filter (or Enter to read all): ")
-			tagInput, err := reader.ReadString('\n')
+			notesPath := getNotesPath(ctx)
+			vaultFile := getVaultFile(ctx)
+			tagInput, err := promptForSingleTagWithAutocomplete(notesPath, vaultFile, "Enter tag to filter (or Enter to read all): ")
 			if err != nil {
 				fmt.Printf("Error reading tag: %v\n", err)
 			} else {
@@ -2577,8 +2742,9 @@ func mainMenu(ctx context.Context) error {
 				}
 			}
 		case "e":
-			fmt.Print("Enter tag to filter (or Enter to export all): ")
-			tagInput, err := reader.ReadString('\n')
+			notesPath := getNotesPath(ctx)
+			vaultFile := getVaultFile(ctx)
+			tagInput, err := promptForSingleTagWithAutocomplete(notesPath, vaultFile, "Enter tag to filter (or Enter to export all): ")
 			if err != nil {
 				fmt.Printf("Error reading tag: %v\n", err)
 			} else if err := exportNotes(ctx, strings.TrimSpace(tagInput)); err != nil {
