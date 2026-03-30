@@ -408,6 +408,19 @@ func tagMatches(tag, filterTag string) bool {
 	return false
 }
 
+// tagsMatch checks if two tag slices contain the same tags in the same order
+func tagsMatch(tags1, tags2 []string) bool {
+	if len(tags1) != len(tags2) {
+		return false
+	}
+	for i := range tags1 {
+		if tags1[i] != tags2[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // ============================================================================
 // Terminal Control and Autocomplete
 // ============================================================================
@@ -1978,20 +1991,40 @@ func editNoteInteractive(ctx context.Context, filename string) error {
 			handleEditAction(ctx, entry, filePath)
 		case "r", "rename":
 			// For edit mode, we use a simplified rename handler
+			oldFilename := filename
 			result, newEntries := handleRenameActionEdit(ctx, reader, entry, &entries)
 			if result.shouldExit {
 				return nil
 			}
 			if result.shouldReload {
 				entries = newEntries
-				// Find the entry in the reloaded list
+				// Find the renamed entry - look for entry with matching tags
 				found = false
 				for _, e := range entries {
-					if e.filename == filename {
+					if e.filename != oldFilename && tagsMatch(e.tags, entry.tags) {
 						entry = e
+						filename = e.filename
+						filePath = filepath.Join(notesDir, filename)
 						found = true
 						break
 					}
+				}
+				// If not found by tags, the filename may not have changed or tags changed
+				if !found {
+					for _, e := range entries {
+						if e.filename == oldFilename {
+							entry = e
+							found = true
+							break
+						}
+					}
+				}
+				if !found && len(entries) > 0 {
+					// Fallback: use first entry
+					entry = entries[0]
+					filename = entries[0].filename
+					filePath = filepath.Join(notesDir, filename)
+					found = true
 				}
 				if !found {
 					fmt.Println("\033[33mNote renamed successfully. Exiting.\033[0m")
