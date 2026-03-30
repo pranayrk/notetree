@@ -246,11 +246,9 @@ func collectNotesByTag(ctx context.Context) error {
 	// Group entries by their first tag
 	tagGroups := make(map[string][]noteEntry)
 	var tagOrder []string
-	seenTags := make(map[string]bool)
 
 	// Add untagged entries to the start of the file
 	tagOrder = append(tagOrder, "_untagged")
-	seenTags["_untagged"] = true
 	tagGroups["_untagged"] = []noteEntry{}
 
 	for _, line := range strings.Split(string(data), "\n") {
@@ -271,14 +269,18 @@ func collectNotesByTag(ctx context.Context) error {
 			tag = "_untagged"
 		}
 
-		if !seenTags[tag] {
-			seenTags[tag] = true
-
+		_, seenTag := tagGroups[tag];
+		if !seenTag {
 			matchedTag := false
 			for i := len(tagOrder) - 1; i >= 0; i-- {
 				if(tagMatches(tag, tagOrder[i])) {
-					tagOrder = append(tagOrder[:i + 1], append([]string{tag}, tagOrder[i + 1:]...)...)
-					matchedTag = true
+					for j := i + 1; j < len(tagOrder); j++ {
+						if(!tagMatches(tagOrder[j], tagOrder[i])) {
+							tagOrder = append(tagOrder[:j], append([]string{tag}, tagOrder[j:]...)...)
+							matchedTag = true
+							break
+						}
+					}
 					break
 				}
 			}
@@ -3052,12 +3054,12 @@ func exportNotes(ctx context.Context, filterTag string) error {
 func mainMenu(ctx context.Context) error {
 	reader := bufio.NewReader(os.Stdin)
 
-	// Reorganize notes by tag when main menu loads
-	if err := collectNotesByTag(ctx); err != nil {
-		fmt.Printf("Error organizing notes by tag: %v\n", err)
-	}
-
 	for {
+		// Reorganize notes by tag when main menu loads
+		if err := collectNotesByTag(ctx); err != nil {
+			fmt.Printf("Error organizing notes by tag: %v\n", err)
+		}
+
 		fmt.Printf("notetree version %s\n", appVersion)
 		fmt.Printf("Current vault file: \033[1m%s\033[0m\n", getVaultFile(ctx))
 		fmt.Println("  (A)dd notes")
