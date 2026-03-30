@@ -13,6 +13,7 @@ const (
 	notesPathKey      = "notes_path"
 	markdownReaderKey = "markdown_reader"
 	vaultFileKey      = "vault_file"
+	exportCommandKey  = "export_command"
 )
 
 // Config holds the application configuration
@@ -20,6 +21,7 @@ type Config struct {
 	NotesPath      string
 	MarkdownReader string
 	VaultFile      string
+	ExportCommand  string
 }
 
 // getConfigPath returns the path to the config file
@@ -81,6 +83,8 @@ func Load() (*Config, error) {
 			config.MarkdownReader = value
 		} else if key == vaultFileKey {
 			config.VaultFile = value
+		} else if key == exportCommandKey {
+			config.ExportCommand = value
 		}
 	}
 
@@ -120,6 +124,13 @@ func (c *Config) Save() error {
 
 	if c.VaultFile != "" {
 		_, err = fmt.Fprintf(file, "%s=%s\n", vaultFileKey, c.VaultFile)
+		if err != nil {
+			return fmt.Errorf("failed to write config: %w", err)
+		}
+	}
+
+	if c.ExportCommand != "" {
+		_, err = fmt.Fprintf(file, "%s=%s\n", exportCommandKey, c.ExportCommand)
 		if err != nil {
 			return fmt.Errorf("failed to write config: %w", err)
 		}
@@ -258,6 +269,42 @@ func GetVaultFile(notesPath string) (string, error) {
 	fmt.Printf("Vault file configured: %s\n", vaultFile)
 
 	return vaultFile, nil
+}
+
+// GetExportCommand returns the export command, prompting the user if not configured
+func GetExportCommand() (string, error) {
+	config, err := Load()
+	if err != nil {
+		return "", err
+	}
+
+	if config.ExportCommand != "" {
+		return config.ExportCommand, nil
+	}
+
+	fmt.Println("Export command not configured.")
+	fmt.Println("The command should include {input} for the input markdown file and {output} for the output PDF.")
+	fmt.Print("Enter the export command (e.g., 'pandoc {input} --pdf-engine=typst -o {output}'): ")
+
+	reader := bufio.NewReader(os.Stdin)
+	exportCommand, err := reader.ReadString('\n')
+	if err != nil {
+		return "", fmt.Errorf("failed to read input: %w", err)
+	}
+
+	exportCommand = strings.TrimSpace(exportCommand)
+	if exportCommand == "" {
+		return "", fmt.Errorf("export command cannot be empty")
+	}
+
+	config.ExportCommand = exportCommand
+	if err := config.Save(); err != nil {
+		return "", fmt.Errorf("failed to save config: %w", err)
+	}
+
+	fmt.Printf("Export command configured: %s\n", exportCommand)
+
+	return exportCommand, nil
 }
 
 // ListVaultFiles returns a list of existing vault files in the notes directory

@@ -248,6 +248,11 @@ func collectNotesByTag(ctx context.Context) error {
 	var tagOrder []string
 	seenTags := make(map[string]bool)
 
+	// Add untagged entries to the start of the file
+	tagOrder = append(tagOrder, "_untagged")
+	seenTags["_untagged"] = true
+	tagGroups["_untagged"] = []noteEntry{}
+
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -2978,7 +2983,21 @@ func exportNotes(ctx context.Context, filterTag string) error {
 	vaultFile := getVaultFile(ctx)
 	notesVaultFile := filepath.Join(notesPath, vaultFile)
 
+	// Get current working directory for output path resolution
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current working directory: %w", err)
+	}
+
+	// Get export command from config (prompts if not set)
+	exportCommand, err := config.GetExportCommand()
+	if err != nil {
+		return fmt.Errorf("failed to get export command: %w", err)
+	}
+
+	// Prompt for output path
 	reader := bufio.NewReader(os.Stdin)
+	fmt.Println()
 	fmt.Print("Enter output PDF path: ")
 	outputPath, err := reader.ReadString('\n')
 	if err != nil {
@@ -2989,35 +3008,37 @@ func exportNotes(ctx context.Context, filterTag string) error {
 		return fmt.Errorf("output path cannot be empty")
 	}
 
-	// Generate PDF in same folder as vault file so relative image paths work
-	if _, err := exec.LookPath("pandoc"); err != nil {
-		return fmt.Errorf("pandoc is not installed: %w", err)
+	// Resolve relative paths against current working directory
+	if !filepath.IsAbs(outputPath) {
+		outputPath = filepath.Join(cwd, outputPath)
 	}
 
-	tempPDF := filepath.Join(filepath.Dir(notesVaultFile), filepath.Base(tmpPath)+".pdf")
-	cmd := exec.Command("pandoc", tmpPath, "--pdf-engine=typst", "-o", tempPDF)
+	// Replace placeholders in the export command
+	exportCommand = strings.ReplaceAll(exportCommand, "{input}", tmpPath)
+	exportCommand = strings.ReplaceAll(exportCommand, "{output}", outputPath)
+
+	// Parse the command and arguments
+	cmdParts := strings.Fields(exportCommand)
+	if len(cmdParts) == 0 {
+		return fmt.Errorf("export command cannot be empty")
+	}
+
+	cmdName := cmdParts[0]
+	cmdArgs := cmdParts[1:]
+
+	// Check if command exists
+	if _, err := exec.LookPath(cmdName); err != nil {
+		return fmt.Errorf("%s is not installed: %w", cmdName, err)
+	}
+
+	// Execute the export command
+	cmd := exec.Command(cmdName, cmdArgs...)
 	cmd.Dir = filepath.Dir(notesVaultFile)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		os.Remove(tempPDF)
-		return fmt.Errorf("failed to export PDF (ensure pandoc and typst are installed): %w", err)
-	}
-
-	// Move the PDF to the final output path
-	if err := os.Rename(tempPDF, outputPath); err != nil {
-		// If rename fails (e.g., cross-device), copy and delete
-		srcData, readErr := os.ReadFile(tempPDF)
-		if readErr != nil {
-			os.Remove(tempPDF)
-			return fmt.Errorf("failed to export PDF: %w", err)
-		}
-		if writeErr := os.WriteFile(outputPath, srcData, 0644); writeErr != nil {
-			os.Remove(tempPDF)
-			return fmt.Errorf("failed to export PDF: %w", err)
-		}
-		os.Remove(tempPDF)
+		return fmt.Errorf("failed to export PDF (ensure %s and required tools are installed): %w", cmdName, err)
 	}
 
 	fmt.Printf("Exported PDF to: \033[32m%s\033[0m\n", outputPath)
