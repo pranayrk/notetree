@@ -2730,6 +2730,7 @@ func mainMenu(ctx context.Context) error {
 			if err != nil {
 				fmt.Printf("Error reading tag: %v\n", err)
 			} else {
+				fmt.Println()
 				fmt.Print("Include filenames in output? (y for yes, Enter for no): ")
 				includeInput, err := reader.ReadString('\n')
 				if err != nil {
