@@ -2208,6 +2208,93 @@ func renameVaultFile(ctx context.Context, reader *bufio.Reader) (string, error) 
 	return newName, nil
 }
 
+// deleteVaultFile deletes a vault file and all notes referenced in it
+func deleteVaultFile(ctx context.Context, reader *bufio.Reader) error {
+	notesPath := getNotesPath(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
+	}
+
+	currentVaultFile := getVaultFile(ctx)
+	notesDir := filepath.Join(notesPath, "notes")
+
+	fmt.Println()
+	fmt.Printf("\033[31mWARNING: This will delete the vault file '%s' and all notes listed in it.\033[0m\n", currentVaultFile)
+	fmt.Println("This action cannot be undone.")
+	fmt.Println()
+
+	// Ask for confirmation - require entering the vault file name twice
+	fmt.Printf("Enter vault file name to confirm deletion (or 'cancel' to abort): ")
+	confirm1, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("failed to read confirmation: %w", err)
+	}
+	confirm1 = strings.TrimSpace(confirm1)
+
+	if confirm1 == "cancel" || confirm1 == "" {
+		fmt.Println("\033[33mDeletion cancelled.\033[0m")
+		return nil
+	}
+
+	if confirm1 != currentVaultFile {
+		fmt.Printf("\033[31mVault file name does not match. Expected '%s', got '%s'.\033[0m\n", currentVaultFile, confirm1)
+		fmt.Println("\033[33mDeletion cancelled.\033[0m")
+		return nil
+	}
+
+	fmt.Printf("Enter vault file name again to confirm: ")
+	confirm2, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("failed to read confirmation: %w", err)
+	}
+	confirm2 = strings.TrimSpace(confirm2)
+
+	if confirm2 != currentVaultFile {
+		fmt.Printf("\033[31mVault file name does not match. Expected '%s', got '%s'.\033[0m\n", currentVaultFile, confirm2)
+		fmt.Println("\033[33mDeletion cancelled.\033[0m")
+		return nil
+	}
+
+	// Load entries to get the list of notes to delete
+	entries, err := loadNotes(notesPath, currentVaultFile)
+	if err != nil {
+		return fmt.Errorf("failed to load vault file: %w", err)
+	}
+
+	// Delete all note files referenced in the vault
+	deletedCount := 0
+	for _, entry := range entries {
+		filePath := filepath.Join(notesDir, entry.filename)
+		if _, err := os.Stat(filePath); err == nil {
+			if err := os.Remove(filePath); err != nil {
+				fmt.Printf("Failed to delete note file '%s': %v\n", entry.filename, err)
+			} else {
+				deletedCount++
+			}
+		}
+	}
+
+	// Delete the vault file itself
+	vaultFilePath := filepath.Join(notesPath, currentVaultFile)
+	if err := os.Remove(vaultFilePath); err != nil {
+		return fmt.Errorf("failed to delete vault file: %w", err)
+	}
+
+	fmt.Printf("Deleted \033[32m%d note(s)\033[0m and vault file \033[32m'%s'\033[0m.\n", deletedCount, currentVaultFile)
+
+	// Reset to default vault file
+	if err := config.SetVaultFile("notes.vault"); err != nil {
+		fmt.Printf("Warning: Failed to reset vault file: %v\n", err)
+	}
+
+	// Reorganize notes by tag if there are remaining vault files
+	if err := collectNotesByTag(ctx); err != nil {
+		fmt.Printf("Error organizing notes by tag: %v\n", err)
+	}
+
+	return nil
+}
+
 func manageVaultFiles(ctx context.Context, reader *bufio.Reader) (string, error) {
 	notesPath := getNotesPath(ctx)
 	if notesPath == "" {
@@ -2239,6 +2326,7 @@ func manageVaultFiles(ctx context.Context, reader *bufio.Reader) (string, error)
 		fmt.Println("  (N)ew vault file")
 		fmt.Println("  (O)pen vault file in editor")
 		fmt.Println("  (R)ename vault file")
+		fmt.Println("  (D)elete vault file")
 		fmt.Println("  (Q)uit")
 		fmt.Println()
 
@@ -2260,6 +2348,11 @@ func manageVaultFiles(ctx context.Context, reader *bufio.Reader) (string, error)
 			}
 		case "r":
 			return renameVaultFile(ctx, reader)
+		case "d":
+			// Delete vault file
+			if err := deleteVaultFile(ctx, reader); err != nil {
+				fmt.Printf("Error deleting vault file: %v\n", err)
+			}
 		case "n":
 			fmt.Print("Enter new vault file name: ")
 			newName, err := reader.ReadString('\n')
