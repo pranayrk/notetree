@@ -2953,6 +2953,81 @@ func buildNotesFile(ctx context.Context, filterTag string, includeFilenames bool
 	return tmpPath, func() { os.Remove(tmpPath) }, nil
 }
 
+// listNotes lists all notes in the vault, optionally filtered by tag
+func listNotes(ctx context.Context, filterTag string) error {
+	notesPath := getNotesPath(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
+	}
+	vaultFile := getVaultFile(ctx)
+
+	entries, err := loadNotes(notesPath, vaultFile)
+	if err != nil {
+		return fmt.Errorf("failed to load notes: %w", err)
+	}
+
+	// Filter entries by tag if specified
+	var filteredEntries []noteEntry
+	if filterTag == "" {
+		filteredEntries = entries
+	} else {
+		for _, entry := range entries {
+			for _, tag := range entry.tags {
+				if tagMatches(tag, filterTag) {
+					filteredEntries = append(filteredEntries, entry)
+					break
+				}
+			}
+		}
+	}
+
+	if len(filteredEntries) == 0 {
+		if filterTag != "" {
+			fmt.Printf("No notes found with tag: %s\n", filterTag)
+		} else {
+			fmt.Println("No notes found.")
+		}
+		return nil
+	}
+
+	// Display the notes
+	fmt.Printf("Found %d note(s):\n\n", len(filteredEntries))
+	for _, entry := range filteredEntries {
+		tagsStr := ""
+		if len(entry.tags) > 0 {
+			tagsStr = fmt.Sprintf(" [%s]", strings.Join(entry.tags, ","))
+		}
+		fmt.Printf("  %s%s\n", entry.filename, tagsStr)
+	}
+
+	return nil
+}
+
+// catNote displays the contents of a specific note file
+func catNote(ctx context.Context, filename string) error {
+	notesPath := getNotesPath(ctx)
+	if notesPath == "" {
+		return fmt.Errorf("notes path not configured")
+	}
+
+	notesDir := filepath.Join(notesPath, "notes")
+	filePath := filepath.Join(notesDir, filename)
+
+	// Check if file exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return fmt.Errorf("note not found: %s", filename)
+	}
+
+	// Read and display the file contents
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to read note: %w", err)
+	}
+
+	fmt.Print(string(data))
+	return nil
+}
+
 func readNotes(ctx context.Context, filterTag string, includeFilenames bool) error {
 	tmpPath, cleanup, err := buildNotesFile(ctx, filterTag, includeFilenames)
 	if err != nil {
@@ -3235,6 +3310,36 @@ func main() {
 				Usage:   "Add images to the images folder",
 				Action: func(ctx context.Context, c *cli.Command) error {
 					return addImages(ctx)
+				},
+			},
+			{
+				Name:        "ls",
+				Usage:       "List all notes in the vault",
+				Description: "Lists all notes registered in the vault file.\nUse -t flag to filter by tag.",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:    "tag",
+						Aliases: []string{"t"},
+						Usage:   "Filter notes by tag",
+					},
+				},
+				Action: func(ctx context.Context, c *cli.Command) error {
+					filterTag := c.String("tag")
+					return listNotes(ctx, filterTag)
+				},
+			},
+			{
+				Name:        "cat",
+				Aliases:     []string{"c"},
+				Usage:       "Display contents of a note",
+				ArgsUsage:   "<filename>",
+				Description: "Displays the contents of a specific note file.",
+				Action: func(ctx context.Context, c *cli.Command) error {
+					filename := c.Args().First()
+					if filename == "" {
+						return fmt.Errorf("filename required, usage: notetree cat <filename>")
+					}
+					return catNote(ctx, filename)
 				},
 			},
 			{
