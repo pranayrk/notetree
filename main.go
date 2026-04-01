@@ -948,26 +948,18 @@ func createNotesInteractive(ctx context.Context) error {
 			break
 		}
 
-		fmt.Print("Enter note filename (or press Enter for auto-generated): ")
-		customFilename, err := reader.ReadString('\n')
-		if err != nil {
-			fmt.Printf("Failed to read filename: %v\n", err)
-			continue
-		}
-		customFilename = strings.TrimSpace(customFilename)
-
-		filename := customFilename
-		if filename == "" {
-			filename = time.Now().Format("2006-01-02_15-04-05") + ".md"
-		} else if !strings.HasSuffix(filename, ".md") {
-			filename += ".md"
-		}
-
+		// Generate auto-generated filename
+		filename := time.Now().Format("2006-01-02_15-04-05") + ".md"
 		filePath := filepath.Join(notesDir, filename)
 
-		if _, err := os.Stat(filePath); err == nil {
-			fmt.Printf("\033[31mFile already exists: %s\033[0m. Please choose a different name.\n", filename)
-			continue
+		// Ensure filename is unique
+		for {
+			if _, err := os.Stat(filePath); os.IsNotExist(err) {
+				break
+			}
+			// File exists, add milliseconds to make it unique
+			filename = time.Now().Format("2006-01-02_15-04-05.000") + ".md"
+			filePath = filepath.Join(notesDir, filename)
 		}
 
 		if err := os.WriteFile(filePath, []byte{}, 0644); err != nil {
@@ -1002,6 +994,34 @@ func createNotesInteractive(ctx context.Context) error {
 			fmt.Println("\033[32mNote is empty, deleted.\033[0m")
 			fmt.Println()
 			continue
+		}
+
+		// Ask if user wants to rename the file
+		fmt.Printf("Current filename: \033[32m%s\033[0m\n", filename)
+		fmt.Print("Rename file? (Enter to keep current, or type new name): ")
+		newFilename, err := reader.ReadString('\n')
+		if err != nil {
+			fmt.Printf("Failed to read input: %v\n", err)
+			continue
+		}
+		newFilename = strings.TrimSpace(newFilename)
+		if newFilename != "" && newFilename != filename {
+			if !strings.HasSuffix(newFilename, ".md") {
+				newFilename += ".md"
+			}
+
+			newFilePath := filepath.Join(notesDir, newFilename)
+			if _, err := os.Stat(newFilePath); err == nil {
+				fmt.Printf("\033[31mFile already exists: %s\033[0m. Keeping original name.\n", newFilename)
+			} else {
+				if err := os.Rename(filePath, newFilePath); err != nil {
+					fmt.Printf("Failed to rename file: %v\n", err)
+				} else {
+					fmt.Printf("Renamed to: \033[32m%s\033[0m\n", newFilename)
+					filename = newFilename
+					filePath = newFilePath
+				}
+			}
 		}
 
 		tags, err := promptForTagsWithAutocomplete(notesPath, vaultFile)
