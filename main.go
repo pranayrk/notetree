@@ -2991,7 +2991,6 @@ func listNotes(ctx context.Context, filterTag string) error {
 	}
 
 	// Display the notes
-	fmt.Printf("Found %d note(s):\n\n", len(filteredEntries))
 	for _, entry := range filteredEntries {
 		tagsStr := ""
 		if len(entry.tags) > 0 {
@@ -3163,7 +3162,6 @@ func mainMenu(ctx context.Context) error {
 		fmt.Println("  (E)xport note PDF")
 		fmt.Println("  (T)ag management")
 		fmt.Println("  (V)ault management")
-		fmt.Println("  (I)mage copy")
 		fmt.Println("  (Q)uit")
 		fmt.Println()
 
@@ -3224,10 +3222,6 @@ func mainMenu(ctx context.Context) error {
 				fmt.Printf("Error reading tag: %v\n", err)
 			} else if err := exportNotes(ctx, strings.TrimSpace(tagInput)); err != nil {
 				fmt.Printf("Error exporting notes: %v\n", err)
-			}
-		case "i":
-			if err := addImages(ctx); err != nil {
-				fmt.Printf("Error adding images: %v\n", err)
 			}
 		case "v":
 			if newVaultFile, err := manageVaultFiles(ctx, reader); err != nil {
