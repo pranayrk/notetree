@@ -586,6 +586,200 @@ func showCompletions(completions []string, cursorPos int, currentInput string) {
 	moveCursorLeft(len(currentInput) - cursorPos)
 }
 
+// getAllNoteFilenames collects all filenames from the vault file
+func getAllNoteFilenames(notesPath, vaultFile string) ([]string, error) {
+	entries, err := loadNotes(notesPath, vaultFile)
+	if err != nil {
+		return nil, err
+	}
+
+	filenames := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.filename != "" {
+			filenames = append(filenames, entry.filename)
+		}
+	}
+	sort.Strings(filenames)
+	return filenames, nil
+}
+
+// findFilenameCompletions finds filenames that start with the given prefix
+func findFilenameCompletions(allFilenames []string, prefix string) []string {
+	if prefix == "" {
+		return allFilenames
+	}
+
+	var completions []string
+	for _, filename := range allFilenames {
+		if strings.HasPrefix(filename, prefix) {
+			completions = append(completions, filename)
+		}
+	}
+	return completions
+}
+
+// showFilenameCompletions displays matching filenames to the user
+func showFilenameCompletions(completions []string, cursorPos int, currentInput string) {
+	if len(completions) == 0 {
+		return
+	}
+
+	// Limit to first 10 suggestions
+	maxDisplay := 10
+	displayCount := len(completions)
+	if displayCount > maxDisplay {
+		displayCount = maxDisplay
+	}
+
+	// Use \r\n for raw mode compatibility (terminal is in raw mode)
+	fmt.Print("\r\n")
+	fmt.Print("\033[90mSuggestions:\033[0m\r\n")
+	for i := 0; i < displayCount; i++ {
+		fmt.Printf("  \033[36m%s\033[0m\r\n", completions[i])
+	}
+	if len(completions) > maxDisplay {
+		fmt.Printf("  \033[90m... and %d more\033[0m\r\n", len(completions)-maxDisplay)
+	}
+
+	// Move cursor back up to the input line
+	// +1 for the initial newline, +1 for "Suggestions:" line, +displayCount for filenames, +1 for "and X more" if shown
+	linesUp := 2 + displayCount
+	if len(completions) > maxDisplay {
+		linesUp++
+	}
+	fmt.Printf("\033[%dA", linesUp)
+
+	// Redraw the input line
+	clearLine()
+	fmt.Print("Enter filename (Tab for autocomplete): ")
+	fmt.Print(currentInput)
+	moveCursorLeft(len(currentInput) - cursorPos)
+}
+
+// promptForFilenameWithAutocomplete prompts for a filename with tab completion support
+func promptForFilenameWithAutocomplete(notesPath, vaultFile string) (string, error) {
+	// Get all existing filenames for autocomplete
+	allFilenames, err := getAllNoteFilenames(notesPath, vaultFile)
+	if err != nil {
+		// Fall back to simple prompt if we can't load filenames
+		return promptForFilenameSimple()
+	}
+
+	// Check if terminal supports raw mode
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return promptForFilenameSimple()
+	}
+
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return promptForFilenameSimple()
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+	fmt.Print("Enter filename (Tab for autocomplete): ")
+
+	var input strings.Builder
+	cursorPos := 0
+
+	for {
+		key, err := readKey()
+		if err != nil {
+			return "", err
+		}
+
+		switch key {
+		case '\t': // Tab - autocomplete
+			currentInput := input.String()
+			completions := findFilenameCompletions(allFilenames, currentInput)
+			if len(completions) == 1 {
+				// Single match - complete it
+				completion := completions[0]
+				input.Reset()
+				input.WriteString(completion)
+				cursorPos = input.Len()
+				clearLine()
+				fmt.Print("Enter filename (Tab for autocomplete): ")
+				fmt.Print(input.String())
+			} else if len(completions) > 1 {
+				// Multiple matches - show suggestions
+				showFilenameCompletions(completions, cursorPos, input.String())
+			}
+			// No matches - do nothing
+
+		case '\r', '\n': // Enter - accept
+			fmt.Println()
+			return strings.TrimSpace(input.String()), nil
+
+		case 127, 8: // Backspace
+			if cursorPos > 0 {
+				inputStr := input.String()
+				newStr := inputStr[:cursorPos-1] + inputStr[cursorPos:]
+				input.Reset()
+				input.WriteString(newStr)
+				cursorPos--
+				clearLine()
+				fmt.Print("Enter filename (Tab for autocomplete): ")
+				fmt.Print(input.String())
+				moveCursorLeft(len(input.String()) - cursorPos)
+			}
+
+		case '×': // Delete key
+			if cursorPos < input.Len() {
+				inputStr := input.String()
+				newStr := inputStr[:cursorPos] + inputStr[cursorPos+1:]
+				input.Reset()
+				input.WriteString(newStr)
+				clearLine()
+				fmt.Print("Enter filename (Tab for autocomplete): ")
+				fmt.Print(input.String())
+				moveCursorLeft(len(input.String()) - cursorPos)
+			}
+
+		case '←': // Left arrow
+			if cursorPos > 0 {
+				cursorPos--
+				moveCursorLeft(1)
+			}
+
+		case '→': // Right arrow
+			if cursorPos < input.Len() {
+				cursorPos++
+				fmt.Print(string(key))
+			}
+
+		case 3: // Ctrl+C
+			fmt.Println("\n\033[33mCancelled.\033[0m")
+			return "", nil
+
+		default:
+			// Insert character at cursor position
+			if key >= 32 && key < 127 { // Printable ASCII
+				inputStr := input.String()
+				newStr := inputStr[:cursorPos] + string(key) + inputStr[cursorPos:]
+				input.Reset()
+				input.WriteString(newStr)
+				cursorPos++
+				clearLine()
+				fmt.Print("Enter filename (Tab for autocomplete): ")
+				fmt.Print(input.String())
+				moveCursorLeft(len(input.String()) - cursorPos)
+			}
+		}
+	}
+}
+
+// promptForFilenameSimple is the fallback simple prompt without autocomplete
+func promptForFilenameSimple() (string, error) {
+	fmt.Print("Enter filename: ")
+	reader := bufio.NewReader(os.Stdin)
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		return "", fmt.Errorf("failed to read input: %w", err)
+	}
+
+	return strings.TrimSpace(input), nil
+}
+
 // promptForTagsWithAutocomplete prompts for tags with tab completion support
 func promptForTagsWithAutocomplete(notesPath, vaultFile string) ([]string, error) {
 	// Get all existing tags for autocomplete
@@ -3326,12 +3520,24 @@ func main() {
 				Name:        "cat",
 				Aliases:     []string{"c"},
 				Usage:       "Display contents of a note",
-				ArgsUsage:   "<filename>",
-				Description: "Displays the contents of a specific note file.",
+				ArgsUsage:   "[filename]",
+				Description: "Displays the contents of a specific note file.\nIf no filename is provided, prompts for filename with autocomplete.",
 				Action: func(ctx context.Context, c *cli.Command) error {
 					filename := c.Args().First()
 					if filename == "" {
-						return fmt.Errorf("filename required, usage: notetree cat <filename>")
+						notesPath := getNotesPath(ctx)
+						if notesPath == "" {
+							return fmt.Errorf("notes path not configured")
+						}
+						vaultFile := getVaultFile(ctx)
+						var err error
+						filename, err = promptForFilenameWithAutocomplete(notesPath, vaultFile)
+						if err != nil {
+							return fmt.Errorf("failed to get filename: %w", err)
+						}
+						if filename == "" {
+							return fmt.Errorf("filename required")
+						}
 					}
 					return catNote(ctx, filename)
 				},
