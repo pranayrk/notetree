@@ -34,6 +34,7 @@ const (
 type noteEntry struct {
 	filename string
 	tags     []string
+	hidden   bool
 }
 
 // ============================================================================
@@ -112,10 +113,14 @@ func saveNotes(notesPath, vaultFile string, entries []noteEntry) error {
 
 	for _, entry := range entries {
 		var line string
+		filename := entry.filename
+		if entry.hidden {
+			filename = "! " + filename
+		}
 		if len(entry.tags) > 0 {
-			line = fmt.Sprintf("%s [%s]\n", entry.filename, strings.Join(entry.tags, ","))
+			line = fmt.Sprintf("%s [%s]\n", filename, strings.Join(entry.tags, ","))
 		} else {
-			line = fmt.Sprintf("%s\n", entry.filename)
+			line = fmt.Sprintf("%s\n", filename)
 		}
 		if _, err := file.WriteString(line); err != nil {
 			return fmt.Errorf("failed to write to notes vault: %w", err)
@@ -307,10 +312,14 @@ func collectNotesByTag(ctx context.Context) error {
 	for _, tag := range tagOrder {
 		for _, entry := range tagGroups[tag] {
 			var line string
+			filename := entry.filename
+			if entry.hidden {
+				filename = "! " + filename
+			}
 			if len(entry.tags) > 0 {
-				line = fmt.Sprintf("%s [%s]\n", entry.filename, strings.Join(entry.tags, ","))
+				line = fmt.Sprintf("%s [%s]\n", filename, strings.Join(entry.tags, ","))
 			} else {
-				line = fmt.Sprintf("%s\n", entry.filename)
+				line = fmt.Sprintf("%s\n", filename)
 			}
 			if _, err := file.WriteString(line); err != nil {
 				return fmt.Errorf("failed to write to notes vault: %w", err)
@@ -1100,6 +1109,13 @@ func parseNoteLine(line string) noteEntry {
 	}
 
 	entry := noteEntry{}
+	
+	// Check if the line starts with "! " indicating a hidden file
+	if strings.HasPrefix(line, "! ") {
+		entry.hidden = true
+		line = strings.TrimPrefix(line, "! ")
+	}
+	
 	bracketIdx := strings.Index(line, "[")
 	if bracketIdx != -1 && strings.HasSuffix(line, "]") {
 		entry.filename = strings.TrimSpace(line[:bracketIdx])
@@ -1782,7 +1798,7 @@ func handleViewAction(ctx context.Context, entry noteEntry, filePath string) act
 }
 
 // displayActionMenu shows the available actions for a note
-func displayActionMenu(browseMode bool) {
+func displayActionMenu(browseMode bool, isHidden bool) {
 	fmt.Println("Actions:")
 	fmt.Println("  (E)dit note")
 	fmt.Println("  (R)ename file")
@@ -1791,6 +1807,11 @@ func displayActionMenu(browseMode bool) {
 	fmt.Println("  (M)ove to another vault file")
 	fmt.Println("  (A)rchive note")
 	fmt.Println("  (V)iew full content in markdown reader")
+	if isHidden {
+		fmt.Println("  (U)nhide note")
+	} else {
+		fmt.Println("  (H)ide note")
+	}
 	if browseMode {
 		fmt.Println("  (N)ext / (P)revious / (Q)uit")
 	} else {
@@ -1925,6 +1946,110 @@ func handleArchiveActionEdit(ctx context.Context, reader *bufio.Reader, entry no
 	return result
 }
 
+// handleHideActionEdit toggles the hidden state of a note in edit mode
+func handleHideActionEdit(ctx context.Context, entry noteEntry, entries *[]noteEntry) (actionResult, []noteEntry) {
+	result := actionResult{}
+	notesPath := getNotesPath(ctx)
+	vaultFile := getVaultFile(ctx)
+
+	// Toggle the hidden state
+	entry.hidden = !entry.hidden
+
+	// Update the entry in the entries slice
+	for i := range *entries {
+		if (*entries)[i].filename == entry.filename {
+			(*entries)[i].hidden = entry.hidden
+			break
+		}
+	}
+
+	// Save the updated entries
+	if err := saveNotes(notesPath, vaultFile, *entries); err != nil {
+		fmt.Printf("Failed to save vault: %v\n", err)
+		return result, *entries
+	}
+
+	if entry.hidden {
+		fmt.Println("\033[33mNote hidden.\033[0m")
+	} else {
+		fmt.Println("\033[32mNote unhidden.\033[0m")
+	}
+	result.shouldReload = true
+	return result, *entries
+}
+
+// handleHideActionBrowse toggles the hidden state of a note in browse mode
+func handleHideActionBrowse(ctx context.Context, reader *bufio.Reader, entry noteEntry, entries *[]noteEntry, filterTag string, untaggedOnly bool, currentIndex int) (actionResult, int, []noteEntry) {
+	result := actionResult{}
+	notesPath := getNotesPath(ctx)
+	vaultFile := getVaultFile(ctx)
+
+	// Toggle the hidden state
+	entry.hidden = !entry.hidden
+
+	// Update the entry in the entries slice
+	for i := range *entries {
+		if (*entries)[i].filename == entry.filename {
+			(*entries)[i].hidden = entry.hidden
+			break
+		}
+	}
+
+	// Save the updated entries
+	if err := saveNotes(notesPath, vaultFile, *entries); err != nil {
+		fmt.Printf("Failed to save vault: %v\n", err)
+		return result, currentIndex, *entries
+	}
+
+	if entry.hidden {
+		fmt.Println("\033[33mNote hidden.\033[0m")
+	} else {
+		fmt.Println("\033[32mNote unhidden.\033[0m")
+	}
+
+	// Reload entries and filter
+	newEntries, err := loadNotes(notesPath, vaultFile)
+	if err != nil {
+		fmt.Printf("Failed to reload notes: %v\n", err)
+		return result, currentIndex, *entries
+	}
+
+	filteredEntries := filterEntries(newEntries, filterTag, untaggedOnly)
+	
+	// Note may have been hidden/unhidden, adjust index if needed
+	// If hidden, it may no longer match the filter (if filter is for untagged only)
+	// If unhidden, it may now match the filter
+	if len(filteredEntries) == 0 {
+		fmt.Println("\033[33mNo more notes to browse.\033[0m")
+		result.shouldExit = true
+		return result, currentIndex, newEntries
+	}
+
+	// Try to find the entry in the filtered list
+	found := false
+	for i, e := range filteredEntries {
+		if e.filename == entry.filename {
+			currentIndex = i
+			result.entryUpdated = &filteredEntries[i]
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		// Entry not in filtered list (may have been hidden or filter changed)
+		if currentIndex >= len(filteredEntries) {
+			currentIndex = len(filteredEntries) - 1
+		}
+		if len(filteredEntries) > 0 {
+			result.entryUpdated = &filteredEntries[currentIndex]
+		}
+	}
+
+	result.shouldReload = true
+	return result, currentIndex, newEntries
+}
+
 // browseNotesInteractive displays notes one by one with action options
 func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly bool) error {
 	notesPath := getNotesPath(ctx)
@@ -1968,7 +2093,11 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 	i := 0
 	for i < len(filteredEntries) {
 		entry := filteredEntries[i]
-		fmt.Printf("\n\033[1m[%d/%d] %s\033[0m\n", i+1, len(filteredEntries), entry.filename)
+		fmt.Printf("\n\033[1m[%d/%d] %s\033[0m", i+1, len(filteredEntries), entry.filename)
+		if entry.hidden {
+			fmt.Print(" \033[33m[HIDDEN]\033[0m")
+		}
+		fmt.Println()
 		if len(entry.tags) > 0 {
 			fmt.Printf("Tags: \033[36m%s\033[0m\n", strings.Join(entry.tags, ", "))
 		} else {
@@ -1996,7 +2125,7 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 		fmt.Println()
 
 		// Show action menu
-		displayActionMenu(true)
+		displayActionMenu(true, entry.hidden)
 
 		fmt.Print("Select action: ")
 		action, err := reader.ReadString('\n')
@@ -2059,6 +2188,30 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 			continue // Skip the advance at the end of loop
 		case "a", "archive":
 			result, i, entries = handleArchiveAction(ctx, reader, entry, &entries, filterTag, untaggedOnly, i)
+			if result.shouldExit {
+				return nil
+			}
+			if result.shouldReload {
+				filteredEntries = filterEntries(entries, filterTag, untaggedOnly)
+				if result.entryUpdated != nil {
+					entry = *result.entryUpdated
+				}
+			}
+			continue // Skip the advance at the end of loop
+		case "h", "hide":
+			result, i, entries = handleHideActionBrowse(ctx, reader, entry, &entries, filterTag, untaggedOnly, i)
+			if result.shouldExit {
+				return nil
+			}
+			if result.shouldReload {
+				filteredEntries = filterEntries(entries, filterTag, untaggedOnly)
+				if result.entryUpdated != nil {
+					entry = *result.entryUpdated
+				}
+			}
+			continue // Skip the advance at the end of loop
+		case "u", "unhide":
+			result, i, entries = handleHideActionBrowse(ctx, reader, entry, &entries, filterTag, untaggedOnly, i)
 			if result.shouldExit {
 				return nil
 			}
@@ -2136,7 +2289,11 @@ func editNoteInteractive(ctx context.Context, filename string) error {
 		return fmt.Errorf("note file does not exist: %s", filePath)
 	}
 
-	fmt.Printf("\n\033[1m%s\033[0m\n", entry.filename)
+	fmt.Printf("\n\033[1m%s\033[0m", entry.filename)
+	if entry.hidden {
+		fmt.Print(" \033[33m[HIDDEN]\033[0m")
+	}
+	fmt.Println()
 	if len(entry.tags) > 0 {
 		fmt.Printf("Tags: \033[36m%s\033[0m\n", strings.Join(entry.tags, ", "))
 	} else {
@@ -2162,7 +2319,7 @@ func editNoteInteractive(ctx context.Context, filename string) error {
 
 	for {
 		// Show action menu
-		displayActionMenu(false)
+		displayActionMenu(false, entry.hidden)
 
 		fmt.Print("Select action: ")
 		action, err := reader.ReadString('\n')
@@ -2255,6 +2412,24 @@ func editNoteInteractive(ctx context.Context, filename string) error {
 			result := handleArchiveActionEdit(ctx, reader, entry)
 			if result.shouldExit {
 				return nil
+			}
+		case "h", "hide":
+			// For edit mode, hide exits after successful hide
+			result, newEntries := handleHideActionEdit(ctx, entry, &entries)
+			if result.shouldExit {
+				return nil
+			}
+			if result.shouldReload {
+				entries = newEntries
+			}
+		case "u", "unhide":
+			// For edit mode, unhide exits after successful unhide
+			result, newEntries := handleHideActionEdit(ctx, entry, &entries)
+			if result.shouldExit {
+				return nil
+			}
+			if result.shouldReload {
+				entries = newEntries
 			}
 		case "v", "view":
 			handleViewAction(ctx, entry, filePath)
@@ -3093,6 +3268,10 @@ func buildNotesFile(ctx context.Context, filterTag string, includeFilenames bool
 		}
 		entry := parseNoteLine(line)
 		if entry.filename != "" {
+			// Skip hidden notes in read/export
+			if entry.hidden {
+				continue
+			}
 			if filterTag == "" {
 				entries = append(entries, entry)
 			} else {
