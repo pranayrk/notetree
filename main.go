@@ -3468,6 +3468,9 @@ func main() {
 							return fmt.Errorf("filename required")
 						}
 					}
+					if !strings.HasSuffix(filename, ".md") {
+						filename += ".md"
+					}
 					return catNote(ctx, filename)
 				},
 			},
@@ -3559,6 +3562,9 @@ func main() {
 					filename := c.Args().First()
 					if filename == "" {
 						return fmt.Errorf("filename required, usage: notetree edit <filename>")
+					}
+					if !strings.HasSuffix(filename, ".md") {
+						filename += ".md"
 					}
 					return editNoteInteractive(ctx, filename)
 				},
