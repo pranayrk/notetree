@@ -2008,6 +2008,7 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 		switch action {
 		case "e", "edit":
 			result = handleEditAction(ctx, entry, filePath)
+			continue // Skip the advance at the end of loop
 		case "r", "rename":
 			result, i, entries = handleRenameAction(ctx, reader, entry, &entries, filterTag, untaggedOnly, i)
 			if result.shouldExit {
@@ -2082,6 +2083,7 @@ func browseNotesInteractive(ctx context.Context, filterTag string, untaggedOnly 
 			continue // Skip the advance at the end of loop
 		case "v", "view":
 			result = handleViewAction(ctx, entry, filePath)
+			continue // Skip the advance at the end of loop
 		case "n", "next":
 			i++
 			if i >= len(filteredEntries) {
